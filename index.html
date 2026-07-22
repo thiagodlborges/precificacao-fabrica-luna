@@ -261,6 +261,11 @@
       <div class="field" style="flex:1"><label>Custo (R$)</label><input class="inp" id="pcCusto" type="number" step="0.01" min="0" oninput="atualizarMargensModal()"></div>
       <div class="field" style="flex:1"><label>Preço de venda (R$)</label><input class="inp" id="pcPrecoVenda" type="number" step="0.01" min="0" oninput="atualizarMargensModal()"></div>
     </div>
+    <div class="field" id="pcVariegatoWrap" style="margin-bottom:10px;display:none">
+      <label>Variegato Loja (R$/kg) — quando a loja compra o variegato à parte</label>
+      <input class="inp" id="pcVariegatoLoja" type="number" step="0.01" min="0" value="0">
+      <p class="hint" style="margin-top:4px">Deixe 0 se o variegato desse sabor já vem embutido no produto da fábrica. Esse valor soma ao preço fábrica→loja na média ponderada usada pela Loja — não muda o custo/margem da Fábrica mostrados acima.</p>
+    </div>
     <label id="pcCustoCreditoWrap" style="display:flex;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;margin-bottom:10px;font-size:.8rem;color:var(--text-light)">
       <input type="checkbox" id="pcCustoTomaCredito" checked style="width:16px;height:16px" onchange="atualizarMargensModal()"> Esse custo (sem detalhar por item) toma crédito de imposto
     </label>
@@ -963,6 +968,7 @@ async function renderPrecos(){
     const categorias = Object.keys(porCategoria).sort();
 
     el.innerHTML = subnav + categorias.map(cat => {
+      const ehGelato = cat === 'Gelato';
       const linhas = porCategoria[cat].map(p => {
         const row = precoVigenteDe(todosPrecos, p.id, precosEloAtual);
         const soma = row ? somaTributosPorPreco[row.id] : null;
@@ -973,6 +979,7 @@ async function renderPrecos(){
           '<td>'+esc(p.nome)+'</td>'+
           '<td>'+(row?fmtMoeda(row.custo):'—')+'</td>'+
           '<td>'+(row?fmtMoeda(row.preco_venda):'—')+'</td>'+
+          (ehGelato ? '<td>'+(row && row.variegato_loja > 0 ? fmtMoeda(row.variegato_loja) : '—')+'</td>' : '')+
           (m ? '<td class="mc-cell"><span class="r'+(m.mcBrutaR<0?' neg':'')+'">'+fmtMoeda(m.mcBrutaR)+'</span><span class="p">'+fmtPct(m.mcBrutaPct)+'</span></td>' : '<td>—</td>')+
           (m ? '<td class="mc-cell"><span class="r'+(m.mcLiquidaR<0?' neg':'')+'">'+fmtMoeda(m.mcLiquidaR)+'</span><span class="p">'+fmtPct(m.mcLiquidaPct)+'</span></td>' : '<td>—</td>')+
           '<td>'+(row?fmtData(row.vigencia_inicio):'—')+'</td>'+
@@ -983,7 +990,7 @@ async function renderPrecos(){
           '</td>'+
         '</tr>';
       }).join('');
-      return '<div class="card"><h2>'+esc(cat)+'</h2><div style="overflow-x:auto"><table><thead><tr><th>Produto</th><th>Custo</th><th>Preço Venda</th><th>MC Bruta</th><th>MC Líquida</th><th>Vigente desde</th><th></th></tr></thead><tbody>'+linhas+'</tbody></table></div></div>';
+      return '<div class="card"><h2>'+esc(cat)+'</h2><div style="overflow-x:auto"><table><thead><tr><th>Produto</th><th>Custo</th><th>Preço Venda</th>'+(ehGelato?'<th>Variegato Loja</th>':'')+'<th>MC Bruta</th><th>MC Líquida</th><th>Vigente desde</th><th></th></tr></thead><tbody>'+linhas+'</tbody></table></div></div>';
     }).join('');
   } catch(err) {
     el.innerHTML = subnav+'<div class="card"><div class="empty">Erro ao carregar: '+esc(err.message||String(err))+'</div></div>';
@@ -1027,6 +1034,7 @@ async function carregarHistoricoPreco(){
 function renderHistoricoTabela(){
   const filtro = ($('historicoFiltro').value || '').toLowerCase().trim();
   const hoje = hojeISO();
+  const ehGelatoHist = produtoSelecionadoPrecos && produtoSelecionadoPrecos.categoria === 'Gelato';
 
   const linhasInfo = precosCache.map(row => {
     let status, statusLabel;
@@ -1058,6 +1066,7 @@ function renderHistoricoTabela(){
       '<td><span class="badge badge-tipo">'+ELO_LABEL[row.elo]+'</span></td>'+
       '<td>'+fmtMoeda(row.custo)+'</td>'+
       '<td>'+fmtMoeda(row.preco_venda)+'</td>'+
+      (ehGelatoHist ? '<td>'+(row.variegato_loja > 0 ? fmtMoeda(row.variegato_loja) : '—')+'</td>' : '')+
       '<td>'+tributoTxt+'</td>'+
       '<td class="mc-cell"><span class="r'+(m.mcBrutaR<0?' neg':'')+'">'+fmtMoeda(m.mcBrutaR)+'</span><span class="p">'+fmtPct(m.mcBrutaPct)+'</span></td>'+
       '<td class="mc-cell"><span class="r'+(m.mcLiquidaR<0?' neg':'')+'">'+fmtMoeda(m.mcLiquidaR)+'</span><span class="p">'+fmtPct(m.mcLiquidaPct)+'</span></td>'+
@@ -1077,7 +1086,7 @@ function renderHistoricoTabela(){
   if(!filtradas.length){ $('historicoConteudo').innerHTML = '<div class="empty">Nenhum registro encontrado pra essa busca.</div>'; return; }
 
   $('historicoConteudo').innerHTML =
-    '<div style="overflow-x:auto"><table><thead><tr><th>Elo</th><th>Custo</th><th>Preço Venda</th><th>Tributo</th><th>MC Bruta</th><th>MC Líquida</th><th>Vigência desde</th><th>Status</th><th></th></tr></thead><tbody>'+
+    '<div style="overflow-x:auto"><table><thead><tr><th>Elo</th><th>Custo</th><th>Preço Venda</th>'+(ehGelatoHist?'<th>Variegato Loja</th>':'')+'<th>Tributo</th><th>MC Bruta</th><th>MC Líquida</th><th>Vigência desde</th><th>Status</th><th></th></tr></thead><tbody>'+
       filtradas.map(l => l.html).join('')+
     '</tbody></table></div>';
 }
@@ -1132,6 +1141,8 @@ async function abrirNovoValor(produtoId, elo, foco){
   $('pcPrecoVenda').value = vigente ? vigente.preco_venda : '';
   $('pcVigencia').value = hojeISO();
   $('pcCustoTomaCredito').checked = vigente ? (vigente.custo_toma_credito !== false) : true;
+  $('pcVariegatoWrap').style.display = produtoSelecionadoPrecos.categoria === 'Gelato' ? 'block' : 'none';
+  $('pcVariegatoLoja').value = vigente ? (vigente.variegato_loja || 0) : 0;
   const tributosSelecionados = vigente ? (await sb.from('precificacao_preco_tributos').select('tributo_id').eq('preco_id', vigente.id)).data || [] : [];
   await popularTributosCheckboxDoElo($('pcElo').value, tributosSelecionados.map(t => t.tributo_id));
 
@@ -1152,6 +1163,8 @@ function abrirNovoPreco(){
   if(elos.includes(precosEloAtual)) $('pcElo').value = precosEloAtual;
   $('pcCusto').value=''; $('pcPrecoVenda').value=''; $('pcVigencia').value=hojeISO();
   $('pcCustoTomaCredito').checked = true;
+  $('pcVariegatoWrap').style.display = produtoSelecionadoPrecos.categoria === 'Gelato' ? 'block' : 'none';
+  $('pcVariegatoLoja').value = 0;
   popularTributosCheckboxDoElo($('pcElo').value, []);
   showMsg('precoMsg','','');
   carregarInsumosNoPreco(produtoSelecionadoPrecos.id);
@@ -1168,6 +1181,8 @@ async function abrirEditarPreco(id){
   $('pcElo').disabled = true;
   $('pcCusto').value = row.custo; $('pcPrecoVenda').value = row.preco_venda; $('pcVigencia').value = row.vigencia_inicio;
   $('pcCustoTomaCredito').checked = row.custo_toma_credito !== false;
+  $('pcVariegatoWrap').style.display = produtoSelecionadoPrecos.categoria === 'Gelato' ? 'block' : 'none';
+  $('pcVariegatoLoja').value = row.variegato_loja || 0;
   const { data: tribRow } = await sb.from('precificacao_preco_tributos').select('tributo_id').eq('preco_id', row.id);
   await popularTributosCheckboxDoElo(row.elo, (tribRow||[]).map(t => t.tributo_id));
   showMsg('precoMsg','','');
@@ -1180,24 +1195,26 @@ async function salvarPreco(){
   const custo = Number($('pcCusto').value);
   const preco_venda = Number($('pcPrecoVenda').value);
   const custo_toma_credito = $('pcCustoTomaCredito').checked;
+  const variegato_loja = produtoSelecionadoPrecos.categoria === 'Gelato' ? (Number($('pcVariegatoLoja').value) || 0) : 0;
   const tributosSelecionados = [...document.querySelectorAll('.pc-tributo-check:checked')].map(c => c.value);
   const tributo_aplicado_id = tributosSelecionados[0] || null;
   const vigencia_inicio = $('pcVigencia').value;
   if(!vigencia_inicio){ showMsg('precoMsg','Informe a vigência.','err'); return; }
   if(custo < 0 || preco_venda < 0){ showMsg('precoMsg','Custo e preço de venda precisam ser válidos.','err'); return; }
+  if(variegato_loja < 0){ showMsg('precoMsg','Variegato Loja precisa ser um valor válido.','err'); return; }
 
   const btn = $('btnSalvarPreco');
   btn.disabled = true; btn.textContent = 'Salvando…';
   let error, precoId;
   if(precoEditandoId){
-    ({ error } = await sb.from('precificacao_precos').update({ custo, preco_venda, custo_toma_credito, tributo_aplicado_id, vigencia_inicio }).eq('id', precoEditandoId));
+    ({ error } = await sb.from('precificacao_precos').update({ custo, preco_venda, custo_toma_credito, tributo_aplicado_id, vigencia_inicio, variegato_loja }).eq('id', precoEditandoId));
     precoId = precoEditandoId;
   } else {
     const { data: existente } = await sb.from('precificacao_precos').select('id, status')
       .eq('produto_id', produtoSelecionadoPrecos.id).eq('elo', elo).eq('vigencia_inicio', vigencia_inicio).maybeSingle();
 
     if(existente && existente.status === 'pendente'){
-      ({ error } = await sb.from('precificacao_precos').update({ custo, preco_venda, custo_toma_credito, tributo_aplicado_id }).eq('id', existente.id));
+      ({ error } = await sb.from('precificacao_precos').update({ custo, preco_venda, custo_toma_credito, tributo_aplicado_id, variegato_loja }).eq('id', existente.id));
       precoId = existente.id;
     } else if(existente){
       btn.disabled = false; btn.textContent = 'Salvar';
@@ -1205,7 +1222,7 @@ async function salvarPreco(){
       return;
     } else {
       const { data: novo, error: errIns } = await sb.from('precificacao_precos').insert({
-        produto_id: produtoSelecionadoPrecos.id, elo, custo, preco_venda, custo_toma_credito, tributo_aplicado_id, vigencia_inicio,
+        produto_id: produtoSelecionadoPrecos.id, elo, custo, preco_venda, custo_toma_credito, tributo_aplicado_id, vigencia_inicio, variegato_loja,
         criado_por: meuPerfil.id, criado_por_nome: meuPerfil.nome,
       }).select('id').single();
       error = errIns; precoId = novo ? novo.id : null;
