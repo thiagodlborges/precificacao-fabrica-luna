@@ -266,11 +266,23 @@
       <select class="inp" id="pcVariegatoInsumo" onchange="atualizarVariegatoSelecionado()">
         <option value="">— nenhum (preencher valor manual) —</option>
       </select>
-      <div id="pcVariegatoManualWrap" style="margin-top:8px">
-        <input class="inp" id="pcVariegatoLoja" type="number" step="0.01" min="0" value="0" placeholder="Valor manual (R$/kg)">
+      <div class="row" style="margin-top:8px;margin-bottom:0">
+        <div class="field" style="flex:1" id="pcVariegatoQtdWrap">
+          <label style="font-size:.68rem">Quantidade usada por kg de gelato</label>
+          <div style="display:flex;gap:6px">
+            <input class="inp" id="pcVariegatoQtd" type="number" step="0.01" min="0" value="0" style="flex:1">
+            <select class="inp" id="pcVariegatoQtdUnidade" style="max-width:80px">
+              <option value="g">g</option>
+              <option value="kg">kg</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" style="flex:1" id="pcVariegatoManualWrap">
+          <label style="font-size:.68rem">Valor manual (R$/kg)</label>
+          <input class="inp" id="pcVariegatoLoja" type="number" step="0.01" min="0" value="0">
+        </div>
       </div>
-      <p class="hint" id="pcVariegatoResolvido" style="margin-top:4px"></p>
-      <p class="hint" style="margin-top:2px">Deixe em branco (nenhum insumo, valor manual 0) se o variegato desse sabor já vem embutido no produto da fábrica. Esse valor soma ao preço fábrica→loja na média ponderada usada pela Loja — não muda o custo/margem da Fábrica mostrados acima. Se vincular um insumo, o preço usado é sempre o preço médio atual dele no Estoque CD (atualiza sozinho).</p>
+      <p class="hint" id="pcVariegatoResolvido" style="margin-top:6px"></p>
     </div>
     <label id="pcCustoCreditoWrap" style="display:flex;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;margin-bottom:10px;font-size:.8rem;color:var(--text-light)">
       <input type="checkbox" id="pcCustoTomaCredito" checked style="width:16px;height:16px" onchange="atualizarMargensModal()"> Esse custo (sem detalhar por item) toma crédito de imposto
@@ -347,7 +359,7 @@ let insumosCdCache = null;
 
 async function carregarInsumosCd(){
   if(insumosCdCache) return insumosCdCache;
-  const { data, error } = await sb.from('lv_produtos').select('id, produto, unidade, preco_medio').order('produto');
+  const { data, error } = await sb.from('lv_produtos').select('id, produto, unidade, preco_medio').ilike('categoria', '%variegato%').order('produto');
   insumosCdCache = error ? [] : (data || []);
   return insumosCdCache;
 }
@@ -365,7 +377,7 @@ function atualizarVariegatoSelecionado(){
   $('pcVariegatoManualWrap').style.display = escolhido ? 'none' : 'block';
   if(escolhido){
     const preco = Number(sel.selectedOptions[0].dataset.preco) || 0;
-    $('pcVariegatoResolvido').textContent = 'Preço médio atual no Estoque CD: '+fmtMoeda(preco)+' — esse valor é usado automaticamente e se atualiza sozinho quando o Estoque CD mudar.';
+    $('pcVariegatoResolvido').textContent = 'Preço médio atual no Estoque CD: '+fmtMoeda(preco)+'/kg (atualiza sozinho).';
   } else {
     $('pcVariegatoResolvido').textContent = '';
   }
@@ -984,9 +996,11 @@ async function renderPrecos(){
       if(!row) return '—';
       if(row.variegato_loja_insumo_id && insumosCdPorId[row.variegato_loja_insumo_id]){
         const i = insumosCdPorId[row.variegato_loja_insumo_id];
-        return fmtMoeda(i.preco_medio||0)+' <span style="color:var(--text-light);font-size:.72rem">('+esc(i.produto)+')</span>';
+        const qtdKg = (row.variegato_loja_quantidade_unidade === 'kg' ? Number(row.variegato_loja_quantidade||0) : Number(row.variegato_loja_quantidade||0)/1000);
+        const valor = qtdKg * Number(i.preco_medio||0);
+        return fmtMoeda(valor)+'/kg <span style="color:var(--text-light);font-size:.72rem">('+esc(i.produto)+', '+(row.variegato_loja_quantidade||0)+(row.variegato_loja_quantidade_unidade||'g')+'/kg)</span>';
       }
-      return row.variegato_loja > 0 ? fmtMoeda(row.variegato_loja) : '—';
+      return row.variegato_loja > 0 ? fmtMoeda(row.variegato_loja)+'/kg' : '—';
     };
 
     const produtos = prodR.data || [];
@@ -1088,9 +1102,11 @@ function renderHistoricoTabela(){
   const resolverVariegatoTextoHist = (row) => {
     if(row.variegato_loja_insumo_id && insumosCdPorIdHist[row.variegato_loja_insumo_id]){
       const i = insumosCdPorIdHist[row.variegato_loja_insumo_id];
-      return fmtMoeda(i.preco_medio||0)+' <span style="color:var(--text-light);font-size:.72rem">('+esc(i.produto)+')</span>';
+      const qtdKg = (row.variegato_loja_quantidade_unidade === 'kg' ? Number(row.variegato_loja_quantidade||0) : Number(row.variegato_loja_quantidade||0)/1000);
+      const valor = qtdKg * Number(i.preco_medio||0);
+      return fmtMoeda(valor)+'/kg <span style="color:var(--text-light);font-size:.72rem">('+esc(i.produto)+', '+(row.variegato_loja_quantidade||0)+(row.variegato_loja_quantidade_unidade||'g')+'/kg)</span>';
     }
-    return row.variegato_loja > 0 ? fmtMoeda(row.variegato_loja) : '—';
+    return row.variegato_loja > 0 ? fmtMoeda(row.variegato_loja)+'/kg' : '—';
   };
 
   const linhasInfo = precosCache.map(row => {
@@ -1200,6 +1216,8 @@ async function abrirNovoValor(produtoId, elo, foco){
   $('pcCustoTomaCredito').checked = vigente ? (vigente.custo_toma_credito !== false) : true;
   $('pcVariegatoWrap').style.display = produtoSelecionadoPrecos.categoria === 'Gelato' ? 'block' : 'none';
   $('pcVariegatoLoja').value = vigente ? (vigente.variegato_loja || 0) : 0;
+  $('pcVariegatoQtd').value = vigente ? (vigente.variegato_loja_quantidade || 0) : 0;
+  $('pcVariegatoQtdUnidade').value = vigente ? (vigente.variegato_loja_quantidade_unidade || 'g') : 'g';
   if(produtoSelecionadoPrecos.categoria === 'Gelato') await popularSelectVariegato(vigente ? vigente.variegato_loja_insumo_id : null);
   const tributosSelecionados = vigente ? (await sb.from('precificacao_preco_tributos').select('tributo_id').eq('preco_id', vigente.id)).data || [] : [];
   await popularTributosCheckboxDoElo($('pcElo').value, tributosSelecionados.map(t => t.tributo_id));
@@ -1223,6 +1241,8 @@ function abrirNovoPreco(){
   $('pcCustoTomaCredito').checked = true;
   $('pcVariegatoWrap').style.display = produtoSelecionadoPrecos.categoria === 'Gelato' ? 'block' : 'none';
   $('pcVariegatoLoja').value = 0;
+  $('pcVariegatoQtd').value = 0;
+  $('pcVariegatoQtdUnidade').value = 'g';
   if(produtoSelecionadoPrecos.categoria === 'Gelato') popularSelectVariegato(null);
   popularTributosCheckboxDoElo($('pcElo').value, []);
   showMsg('precoMsg','','');
@@ -1242,6 +1262,8 @@ async function abrirEditarPreco(id){
   $('pcCustoTomaCredito').checked = row.custo_toma_credito !== false;
   $('pcVariegatoWrap').style.display = produtoSelecionadoPrecos.categoria === 'Gelato' ? 'block' : 'none';
   $('pcVariegatoLoja').value = row.variegato_loja || 0;
+  $('pcVariegatoQtd').value = row.variegato_loja_quantidade || 0;
+  $('pcVariegatoQtdUnidade').value = row.variegato_loja_quantidade_unidade || 'g';
   if(produtoSelecionadoPrecos.categoria === 'Gelato') await popularSelectVariegato(row.variegato_loja_insumo_id);
   const { data: tribRow } = await sb.from('precificacao_preco_tributos').select('tributo_id').eq('preco_id', row.id);
   await popularTributosCheckboxDoElo(row.elo, (tribRow||[]).map(t => t.tributo_id));
@@ -1257,6 +1279,8 @@ async function salvarPreco(){
   const custo_toma_credito = $('pcCustoTomaCredito').checked;
   const variegato_loja = produtoSelecionadoPrecos.categoria === 'Gelato' ? (Number($('pcVariegatoLoja').value) || 0) : 0;
   const variegato_loja_insumo_id = produtoSelecionadoPrecos.categoria === 'Gelato' ? ($('pcVariegatoInsumo').value || null) : null;
+  const variegato_loja_quantidade = produtoSelecionadoPrecos.categoria === 'Gelato' ? (Number($('pcVariegatoQtd').value) || 0) : 0;
+  const variegato_loja_quantidade_unidade = produtoSelecionadoPrecos.categoria === 'Gelato' ? $('pcVariegatoQtdUnidade').value : 'g';
   const tributosSelecionados = [...document.querySelectorAll('.pc-tributo-check:checked')].map(c => c.value);
   const tributo_aplicado_id = tributosSelecionados[0] || null;
   const vigencia_inicio = $('pcVigencia').value;
@@ -1268,14 +1292,14 @@ async function salvarPreco(){
   btn.disabled = true; btn.textContent = 'Salvando…';
   let error, precoId;
   if(precoEditandoId){
-    ({ error } = await sb.from('precificacao_precos').update({ custo, preco_venda, custo_toma_credito, tributo_aplicado_id, vigencia_inicio, variegato_loja, variegato_loja_insumo_id }).eq('id', precoEditandoId));
+    ({ error } = await sb.from('precificacao_precos').update({ custo, preco_venda, custo_toma_credito, tributo_aplicado_id, vigencia_inicio, variegato_loja, variegato_loja_insumo_id, variegato_loja_quantidade, variegato_loja_quantidade_unidade }).eq('id', precoEditandoId));
     precoId = precoEditandoId;
   } else {
     const { data: existente } = await sb.from('precificacao_precos').select('id, status')
       .eq('produto_id', produtoSelecionadoPrecos.id).eq('elo', elo).eq('vigencia_inicio', vigencia_inicio).maybeSingle();
 
     if(existente && existente.status === 'pendente'){
-      ({ error } = await sb.from('precificacao_precos').update({ custo, preco_venda, custo_toma_credito, tributo_aplicado_id, variegato_loja, variegato_loja_insumo_id }).eq('id', existente.id));
+      ({ error } = await sb.from('precificacao_precos').update({ custo, preco_venda, custo_toma_credito, tributo_aplicado_id, variegato_loja, variegato_loja_insumo_id, variegato_loja_quantidade, variegato_loja_quantidade_unidade }).eq('id', existente.id));
       precoId = existente.id;
     } else if(existente){
       btn.disabled = false; btn.textContent = 'Salvar';
@@ -1283,7 +1307,7 @@ async function salvarPreco(){
       return;
     } else {
       const { data: novo, error: errIns } = await sb.from('precificacao_precos').insert({
-        produto_id: produtoSelecionadoPrecos.id, elo, custo, preco_venda, custo_toma_credito, tributo_aplicado_id, vigencia_inicio, variegato_loja, variegato_loja_insumo_id,
+        produto_id: produtoSelecionadoPrecos.id, elo, custo, preco_venda, custo_toma_credito, tributo_aplicado_id, vigencia_inicio, variegato_loja, variegato_loja_insumo_id, variegato_loja_quantidade, variegato_loja_quantidade_unidade,
         criado_por: meuPerfil.id, criado_por_nome: meuPerfil.nome,
       }).select('id').single();
       error = errIns; precoId = novo ? novo.id : null;
