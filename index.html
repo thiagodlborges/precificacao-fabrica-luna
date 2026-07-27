@@ -129,6 +129,7 @@
   <div class="tab" id="tabTributos" data-tab="tributos" onclick="mudarTab('tributos')">🧾 Tributos</div>
   <div class="tab" id="tabPrecos" data-tab="precos" onclick="mudarTab('precos')">💲 Preços</div>
   <div class="tab" id="tabInsumos" data-tab="insumos" onclick="mudarTab('insumos')">📦 Insumos</div>
+  <div class="tab" id="tabSubreceitas" data-tab="subreceitas" onclick="mudarTab('subreceitas')">🧮 Subreceitas</div>
   <div class="tab" id="tabAprovacoes" data-tab="aprovacoes" onclick="mudarTab('aprovacoes')">✅ Aprovações<span id="badgePendentes"></span></div>
   <div class="tab" id="tabRelatorio" data-tab="relatorio" onclick="mudarTab('relatorio')">🧾 Relatório</div>
 </nav>
@@ -186,6 +187,39 @@
 </div>
 
 <!-- MODAL: Novo/editar insumo -->
+<div class="modal-overlay" id="modalSubreceita">
+  <div class="modal">
+    <h3 id="tituloSubreceita">Nova Subreceita</h3>
+    <input type="hidden" id="srId">
+    <div class="field" style="margin-bottom:10px"><label>Nome</label><input class="inp" id="srNome" placeholder="Ex: Ganache, Farofa de Paçoca..."></div>
+    <label id="srAtivoWrap" style="display:none;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;margin-bottom:10px">
+      <input type="checkbox" id="srAtivo" style="width:16px;height:16px" checked> Subreceita ativa
+    </label>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <label style="margin:0">Componentes (insumos que entram na subreceita)</label>
+      <button type="button" class="btn-outline btn btn-sm" onclick="ordenarComponentesSubreceitaAlfabetico()">🔤 Ordenar A-Z</button>
+    </div>
+    <div id="srComponentesLista" style="margin-bottom:8px"></div>
+    <div class="row" style="margin-bottom:10px">
+      <div class="field" style="flex:2">
+        <input class="inp" type="text" id="srAddComponente_busca" list="srAddComponente_dl" autocomplete="off" placeholder="Digite pra buscar um insumo…">
+        <datalist id="srAddComponente_dl"></datalist>
+        <input type="hidden" id="srAddComponente">
+      </div>
+      <div class="field" style="width:110px"><input class="inp" type="number" min="0" step="0.00001" id="srAddQtd" value="0" placeholder="Kg"></div>
+      <button type="button" class="btn-outline btn btn-sm" style="height:38px" onclick="adicionarComponenteSubreceita()">+ Add</button>
+    </div>
+    <p class="hint" style="margin-top:-4px;margin-bottom:10px">Quantidade sempre em kg do insumo, por kg de subreceita pronta (a soma dos componentes deve fechar 1kg — mesma regra das receitas de produto).</p>
+
+    <div id="srResumo"></div>
+
+    <div class="msg" id="subreceitaMsg"></div>
+    <div class="modal-actions"><button class="btn" onclick="salvarSubreceita()" id="btnSalvarSubreceita">Salvar</button></div>
+    <button class="modal-close" onclick="fecharModal('modalSubreceita')">Cancelar</button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modalInsumo">
   <div class="modal">
     <h3 id="tituloInsumo">Novo Insumo</h3>
@@ -558,6 +592,7 @@ function renderTab(){
   else if(currentTab==='tributos') renderTributos();
   else if(currentTab==='precos') renderPrecos();
   else if(currentTab==='insumos') renderInsumos();
+  else if(currentTab==='subreceitas') renderSubreceitas();
   else if(currentTab==='aprovacoes') renderAprovacoes();
   else if(currentTab==='relatorio') renderRelatorio();
 }
@@ -913,6 +948,186 @@ async function carregarInsumos(){
         '</tr>'
       )).join('')+
     '</tbody></table></div>';
+}
+
+// ── SUBRECEITAS (insumos compostos: Merengue, Crumble etc.) ──────
+let subreceitaEditandoId = null;
+window.__srComponentesAtual = [];
+
+async function renderSubreceitas(){
+  const el = $('mainContent');
+  el.innerHTML =
+    '<div class="card">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">'+
+        '<h2 style="margin:0">Subreceitas</h2>'+
+        '<button class="btn" onclick="abrirNovaSubreceita()">+ Nova Subreceita</button>'+
+      '</div>'+
+      '<p class="hint">São insumos "compostos" — feitos na própria fábrica a partir de outros insumos (ex: Merengue, Crumble), não comprados prontos. O custo é recalculado automaticamente pela soma dos componentes.</p>'+
+      '<div id="subreceitasTabela" class="loading">Carregando…</div>'+
+    '</div>';
+  await carregarSubreceitas();
+}
+
+async function carregarSubreceitas(){
+  const { data, error } = await sb.from('precificacao_insumos').select('*').eq('empresa','fabrica').eq('composto', true).order('nome');
+  if(error){ $('subreceitasTabela').innerHTML = '<div class="empty">Erro: '+esc(error.message)+'</div>'; return; }
+  const subreceitas = data || [];
+  if(!subreceitas.length){ $('subreceitasTabela').innerHTML = '<div class="empty">Nenhuma subreceita cadastrada ainda.</div>'; return; }
+
+  const ids = subreceitas.map(s => s.id);
+  const { data: componentesTodos } = await sb.from('precificacao_insumo_componentes').select('insumo_id, quantidade').in('insumo_id', ids);
+  const pesoPorSubreceita = {};
+  (componentesTodos||[]).forEach(c => { pesoPorSubreceita[c.insumo_id] = (pesoPorSubreceita[c.insumo_id]||0) + Number(c.quantidade||0); });
+
+  $('subreceitasTabela').innerHTML =
+    '<div class="table-wrap"><table><thead><tr><th>Nome</th><th>Custo (R$/kg)</th><th>Peso dos componentes</th><th>Status</th><th></th></tr></thead><tbody>'+
+      subreceitas.map(s => {
+        const peso = pesoPorSubreceita[s.id] || 0;
+        const diffPct = Math.abs(peso - 1) * 100;
+        const corPeso = diffPct <= 2 ? '#2E7D32' : (diffPct <= 8 ? '#B8860B' : '#B43C3C');
+        return '<tr class="'+(s.ativo?'':'inativo')+'">'+
+          '<td>'+esc(s.nome)+'</td>'+
+          '<td>'+fmtMoeda(s.custo_unitario)+'</td>'+
+          '<td style="color:'+corPeso+';font-weight:600">'+peso.toFixed(3)+' kg</td>'+
+          '<td>'+(s.ativo?'<span class="badge badge-ativo">Ativa</span>':'<span class="badge badge-inativo">Inativa</span>')+'</td>'+
+          '<td style="white-space:nowrap">'+
+            '<button class="btn-outline btn btn-sm" onclick="abrirEditarSubreceita(\''+s.id+'\')">Editar</button> '+
+            '<button class="btn-danger" onclick="toggleAtivoSubreceita(\''+s.id+'\','+(!s.ativo)+')">'+(s.ativo?'Desativar':'Reativar')+'</button> '+
+            (souMaster ? '<button class="btn-danger" onclick="excluirSubreceita(\''+s.id+'\')">🗑️</button>' : '')+
+          '</td>'+
+        '</tr>';
+      }).join('')+
+    '</tbody></table></div>';
+}
+
+async function carregarCatalogoComponentes(){
+  const { data } = await sb.from('precificacao_insumos').select('id, nome, custo_unitario, unidade').eq('ativo', true).order('nome');
+  window.__srCatalogoInsumos = data || [];
+  return window.__srCatalogoInsumos;
+}
+
+async function abrirNovaSubreceita(){
+  subreceitaEditandoId = null;
+  $('tituloSubreceita').textContent = 'Nova Subreceita';
+  $('srId').value = ''; $('srNome').value = '';
+  $('srAtivoWrap').style.display = 'none';
+  window.__srComponentesAtual = [];
+  showMsg('subreceitaMsg','','');
+  await carregarCatalogoComponentes();
+  popularComboBusca('srAddComponente', window.__srCatalogoInsumos, i => i.nome+' ('+fmtMoeda(i.custo_unitario)+'/'+(i.unidade||'un')+')', i => i.id);
+  $('srAddQtd').value = 0;
+  renderComponentesSubreceitaLista();
+  $('modalSubreceita').classList.add('show');
+}
+
+async function abrirEditarSubreceita(id){
+  subreceitaEditandoId = id;
+  const { data: s } = await sb.from('precificacao_insumos').select('*').eq('id', id).single();
+  if(!s) return;
+  $('tituloSubreceita').textContent = 'Editar Subreceita';
+  $('srId').value = s.id; $('srNome').value = s.nome;
+  $('srAtivoWrap').style.display = 'flex'; $('srAtivo').checked = !!s.ativo;
+  showMsg('subreceitaMsg','','');
+
+  await carregarCatalogoComponentes();
+  popularComboBusca('srAddComponente', window.__srCatalogoInsumos, i => i.nome+' ('+fmtMoeda(i.custo_unitario)+'/'+(i.unidade||'un')+')', i => i.id);
+  $('srAddQtd').value = 0;
+
+  const { data: componentes } = await sb.from('precificacao_insumo_componentes').select('*').eq('insumo_id', id);
+  const porId = {}; (window.__srCatalogoInsumos||[]).forEach(i => { porId[i.id] = i; });
+  window.__srComponentesAtual = (componentes||[]).map(c => {
+    const insumo = porId[c.componente_insumo_id];
+    return { componente_insumo_id: c.componente_insumo_id, nome: insumo?insumo.nome:'?', custo_unitario: insumo?Number(insumo.custo_unitario)||0:0, quantidade: Number(c.quantidade)||0 };
+  });
+  renderComponentesSubreceitaLista();
+  $('modalSubreceita').classList.add('show');
+}
+
+function renderComponentesSubreceitaLista(){
+  const lista = window.__srComponentesAtual || [];
+  let total = 0, peso = 0;
+  $('srComponentesLista').innerHTML = !lista.length ? '<p class="hint">Nenhum componente adicionado ainda.</p>' :
+    lista.map((c, i) => {
+      const custo = c.quantidade * c.custo_unitario;
+      total += custo; peso += Number(c.quantidade) || 0;
+      return '<div class="combo-item-row"><span style="flex:1">'+c.quantidade+' kg de '+esc(c.nome)+' — '+fmtMoeda(custo)+'</span><button type="button" class="rm" onclick="removerComponenteSubreceita('+i+')">🗑️ Cancelar</button></div>';
+    }).join('');
+
+  const diffPct = Math.abs(peso - 1) * 100;
+  const corPeso = diffPct <= 2 ? '#2E7D32' : (diffPct <= 8 ? '#B8860B' : '#B43C3C');
+  $('srResumo').innerHTML = lista.length
+    ? '<strong>Custo total: '+fmtMoeda(total)+'/kg</strong><div style="margin-top:6px;color:'+corPeso+';font-weight:600">⚖️ Peso dos componentes: '+peso.toFixed(3)+' kg <span style="font-weight:400;color:var(--text-light)">(meta: 1kg)</span></div>'
+    : '';
+}
+
+function adicionarComponenteSubreceita(){
+  const insumoId = $('srAddComponente').value;
+  const insumo = (window.__srCatalogoInsumos||[]).find(i => String(i.id) === String(insumoId));
+  const qtd = Number($('srAddQtd').value) || 0;
+  if(!insumo){ alert('Escolha um insumo válido da lista (digite e selecione uma sugestão).'); return; }
+  if(qtd <= 0){ alert('Informe uma quantidade maior que zero.'); return; }
+  if(subreceitaEditandoId && insumo.id === subreceitaEditandoId){ alert('Uma subreceita não pode ser componente dela mesma.'); return; }
+  window.__srComponentesAtual = window.__srComponentesAtual || [];
+  window.__srComponentesAtual.push({ componente_insumo_id: insumo.id, nome: insumo.nome, custo_unitario: Number(insumo.custo_unitario)||0, quantidade: qtd });
+  renderComponentesSubreceitaLista();
+  $('srAddComponente_busca').value = ''; $('srAddComponente').value = ''; $('srAddQtd').value = 0;
+}
+
+function removerComponenteSubreceita(i){
+  window.__srComponentesAtual.splice(i, 1);
+  renderComponentesSubreceitaLista();
+}
+
+function ordenarComponentesSubreceitaAlfabetico(){
+  (window.__srComponentesAtual||[]).sort((a,b) => a.nome.toLowerCase().localeCompare(b.nome.toLowerCase(), 'pt-BR'));
+  renderComponentesSubreceitaLista();
+}
+
+async function salvarSubreceita(){
+  const nome = $('srNome').value.trim();
+  if(!nome){ showMsg('subreceitaMsg','Informe o nome da subreceita.','err'); return; }
+  const componentes = window.__srComponentesAtual || [];
+  if(!componentes.length){ showMsg('subreceitaMsg','Adicione pelo menos um componente.','err'); return; }
+
+  const btn = $('btnSalvarSubreceita');
+  btn.disabled = true; btn.textContent = 'Salvando…';
+
+  let insumoId = subreceitaEditandoId;
+  let error;
+  if(insumoId){
+    ({ error } = await sb.from('precificacao_insumos').update({ nome, ativo: $('srAtivo').checked }).eq('id', insumoId));
+  } else {
+    const { data: novo, error: errIns } = await sb.from('precificacao_insumos').insert({
+      nome, unidade: 'kg', custo_unitario: 0, composto: true, automatico: false, empresa: 'fabrica',
+      criado_por: meuPerfil.id, criado_por_nome: meuPerfil.nome,
+    }).select('id').single();
+    error = errIns; insumoId = novo ? novo.id : null;
+  }
+
+  if(!error && insumoId){
+    await sb.from('precificacao_insumo_componentes').delete().eq('insumo_id', insumoId);
+    await sb.from('precificacao_insumo_componentes').insert(componentes.map(c => ({ insumo_id: insumoId, componente_insumo_id: c.componente_insumo_id, quantidade: c.quantidade })));
+    await sb.rpc('recalcular_insumos_compostos');
+  }
+
+  btn.disabled = false; btn.textContent = 'Salvar';
+  if(error){ showMsg('subreceitaMsg','Erro: '+error.message,'err'); return; }
+  fecharModal('modalSubreceita');
+  await renderSubreceitas();
+}
+
+async function toggleAtivoSubreceita(id, ativo){
+  const { error } = await sb.from('precificacao_insumos').update({ ativo }).eq('id', id);
+  if(error){ alert('Erro: '+error.message); return; }
+  await carregarSubreceitas();
+}
+
+async function excluirSubreceita(id){
+  if(!confirm('Excluir esta subreceita? Isso também apaga os componentes vinculados a ela. Não é possível se ela estiver sendo usada como insumo em algum produto.')) return;
+  await sb.from('precificacao_insumo_componentes').delete().eq('insumo_id', id);
+  const { error } = await sb.from('precificacao_insumos').delete().eq('id', id);
+  if(error){ alert('Erro: '+error.message+(error.message.includes('foreign key')?' — essa subreceita está em uso em algum produto ou outra subreceita.':'')); return; }
+  await carregarSubreceitas();
 }
 
 function atualizarLabelCalculadora(){
