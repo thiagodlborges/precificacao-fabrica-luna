@@ -601,11 +601,22 @@ async function abrirEditarProduto(id){
 function atualizarPreviaComposicao(){
   const vinculados = window.__insumosVinculadosCache || [];
   let total = 0;
-  vinculados.forEach(v => { total += v.quantidade * (v.precificacao_insumos ? Number(v.precificacao_insumos.custo_unitario) : 0); });
+  let pesoKg = 0;
+  vinculados.forEach(v => {
+    total += v.quantidade * (v.precificacao_insumos ? Number(v.precificacao_insumos.custo_unitario) : 0);
+    const u = ((v.precificacao_insumos ? v.precificacao_insumos.unidade : '') || '').toLowerCase();
+    if (u === 'kg') pesoKg += Number(v.quantidade) || 0;
+    else if (u === 'g' || u === 'grama' || u === 'gramas') pesoKg += (Number(v.quantidade) || 0) / 1000;
+    else if (u === 'l' || u === 'litro' || u === 'litros') pesoKg += Number(v.quantidade) || 0; // 1L ≈ 1kg (leite, creme etc.)
+    else if (u === 'ml') pesoKg += (Number(v.quantidade) || 0) / 1000;
+  });
 
-  $('pdComposicaoResumo').innerHTML = vinculados.length
-    ? '<strong>Total da composição: '+fmtMoeda(total)+'</strong> (some isso ao lançar um novo custo)'
-    : 'Nenhum componente vinculado ainda.';
+  if (!vinculados.length){ $('pdComposicaoResumo').innerHTML = 'Nenhum componente vinculado ainda.'; return; }
+
+  const diffPct = Math.abs(pesoKg - 1) * 100;
+  const corPeso = diffPct <= 2 ? '#2E7D32' : (diffPct <= 8 ? '#B8860B' : '#B43C3C');
+  $('pdComposicaoResumo').innerHTML = '<strong>Total da composição: '+fmtMoeda(total)+'</strong> (some isso ao lançar um novo custo)'+
+    '<div style="margin-top:6px;color:'+corPeso+';font-weight:600">⚖️ Peso parcial dos insumos: '+pesoKg.toFixed(3)+' kg <span style="font-weight:400;color:var(--text-light)">(meta: 1kg pra fechar a receita)</span></div>';
 }
 
 async function salvarProduto(){
@@ -708,15 +719,28 @@ async function carregarInsumosNoPreco(produtoId){
 function renderInsumosNoPrecoLista(){
   const vinculados = window.__pcInsumosVinculados || [];
   let total = 0;
+  let pesoKg = 0;
   $('pcInsumosLista').innerHTML = !vinculados.length ? '<p class="hint">Nenhum componente vinculado ainda.</p>' :
     vinculados.map(v => {
       const custo = v.quantidade * (v.precificacao_insumos ? Number(v.precificacao_insumos.custo_unitario) : 0);
       total += custo;
-      return '<div class="combo-item-row"><label style="display:flex;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;flex:1"><input type="checkbox" style="width:15px;height:15px" '+(v.toma_credito?'checked':'')+' onchange="toggleCreditoInsumoNoPreco(\''+v.id+'\', this.checked)"><span>'+v.quantidade+' '+esc(v.precificacao_insumos?v.precificacao_insumos.unidade:'')+' de '+esc(v.precificacao_insumos?v.precificacao_insumos.nome:'?')+' — '+fmtMoeda(custo)+' <span style="color:var(--text-light);font-size:.72rem">(toma crédito)</span></span></label><button class="rm" onclick="removerInsumoNoPreco(\''+v.id+'\')">🗑️</button></div>';
+      const unidade = (v.precificacao_insumos ? v.precificacao_insumos.unidade : '') || '';
+      const u = unidade.toLowerCase();
+      if (u === 'kg') pesoKg += Number(v.quantidade) || 0;
+      else if (u === 'g' || u === 'grama' || u === 'gramas') pesoKg += (Number(v.quantidade) || 0) / 1000;
+      else if (u === 'l' || u === 'litro' || u === 'litros') pesoKg += Number(v.quantidade) || 0; // 1L ≈ 1kg (leite, creme etc.)
+    else if (u === 'ml') pesoKg += (Number(v.quantidade) || 0) / 1000;
+      return '<div class="combo-item-row"><label style="display:flex;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;flex:1"><input type="checkbox" style="width:15px;height:15px" '+(v.toma_credito?'checked':'')+' onchange="toggleCreditoInsumoNoPreco(\''+v.id+'\', this.checked)"><span>'+v.quantidade+' '+esc(unidade)+' de '+esc(v.precificacao_insumos?v.precificacao_insumos.nome:'?')+' — '+fmtMoeda(custo)+' <span style="color:var(--text-light);font-size:.72rem">(toma crédito)</span></span></label><button class="rm" onclick="removerInsumoNoPreco(\''+v.id+'\')">🗑️</button></div>';
     }).join('');
 
+  const diffPct = Math.abs(pesoKg - 1) * 100;
+  const corPeso = diffPct <= 2 ? '#2E7D32' : (diffPct <= 8 ? '#B8860B' : '#B43C3C');
+  const pesoHtml = vinculados.length
+    ? '<div style="margin-top:6px;color:'+corPeso+';font-weight:600">⚖️ Peso parcial dos insumos: '+pesoKg.toFixed(3)+' kg <span style="font-weight:400;color:var(--text-light)">(meta: 1kg pra fechar a receita)</span></div>'
+    : '';
+
   $('pcComposicaoResumo').innerHTML = vinculados.length
-    ? '<strong>Total da composição: '+fmtMoeda(total)+'</strong> &nbsp;<button type="button" class="btn-outline btn btn-sm" onclick="usarComposicaoComoCusto('+total+')">Usar este valor no Custo</button>'
+    ? '<strong>Total da composição: '+fmtMoeda(total)+'</strong> &nbsp;<button type="button" class="btn-outline btn btn-sm" onclick="usarComposicaoComoCusto('+total+')">Usar este valor no Custo</button>'+pesoHtml
     : '';
   atualizarMargensModal();
 }
