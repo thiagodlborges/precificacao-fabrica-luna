@@ -93,6 +93,9 @@
   .modal-overlay{display:none;position:fixed;inset:0;background:rgba(44,24,16,.5);z-index:500;align-items:center;justify-content:center;padding:20px}
   .modal-overlay.show{display:flex}
   .modal{width:100%;max-width:480px;max-height:88vh;overflow:auto;background:var(--white);border-radius:14px;padding:26px}
+  .modal-grande{max-width:1000px}
+  .grid-2col{display:flex;gap:28px;flex-wrap:wrap}
+  .grid-2col>div{flex:1;min-width:320px}
   .modal h3{font-family:'Cormorant Garamond',serif;font-size:1.25rem;color:var(--bordo-dark);margin-bottom:14px}
   .modal-actions{display:flex;gap:10px;margin-top:16px}
   .modal-close{background:none;border:none;color:var(--marrom-dark);text-decoration:underline;cursor:pointer;font-size:.78rem;display:block;margin:14px auto 0}
@@ -292,72 +295,78 @@
 
 <!-- MODAL: Novo/editar preço -->
 <div class="modal-overlay" id="modalPreco">
-  <div class="modal">
+  <div class="modal modal-grande">
     <h3 id="tituloPreco">Novo Preço</h3>
     <p class="hint" style="margin-bottom:10px" id="pcProdutoNome"></p>
-    <div class="field" style="margin-bottom:10px">
+    <div class="field" style="margin-bottom:14px;max-width:340px">
       <label>Elo</label>
       <select class="inp" id="pcElo" onchange="atualizarTributosDoModalPreco()"></select>
     </div>
-    <div class="row" style="margin-bottom:4px">
-      <div class="field" style="flex:1"><label>Custo (R$)</label><input class="inp" id="pcCusto" type="number" step="0.01" min="0" oninput="atualizarMargensModal()"></div>
-      <div class="field" style="flex:1"><label>Preço de venda (R$)</label><input class="inp" id="pcPrecoVenda" type="number" step="0.01" min="0" oninput="atualizarMargensModal()"></div>
-    </div>
-    <div class="field" id="pcVariegatoWrap" style="margin-bottom:10px;display:none">
-      <label>Variegato Loja — quando a loja compra o variegato à parte (Estoque CD). Pode adicionar mais de um por sabor.</label>
-      <div id="pcVariegatosLista" style="margin-bottom:8px"></div>
-      <div class="row" style="margin-bottom:8px">
-        <div class="field" style="flex:2">
-          <input class="inp" type="text" id="pcVariegatoInsumo_busca" list="pcVariegatoInsumo_dl" autocomplete="off" placeholder="Digite pra buscar variegato…">
-          <datalist id="pcVariegatoInsumo_dl"></datalist>
-          <input type="hidden" id="pcVariegatoInsumo">
+    <div class="grid-2col">
+      <div>
+        <div class="row" style="margin-bottom:4px">
+          <div class="field" style="flex:1"><label>Custo (R$)</label><input class="inp" id="pcCusto" type="number" step="0.01" min="0" oninput="atualizarMargensModal()"></div>
+          <div class="field" style="flex:1"><label>Preço de venda (R$)</label><input class="inp" id="pcPrecoVenda" type="number" step="0.01" min="0" oninput="atualizarMargensModal()"></div>
         </div>
-        <div class="field" style="width:80px"><input class="inp" type="number" min="0" step="0.01" id="pcVariegatoAddQtd" value="0" placeholder="Qtd"></div>
-        <div class="field" style="width:70px">
-          <select class="inp" id="pcVariegatoAddUnidade">
-            <option value="g">g</option>
-            <option value="kg">kg</option>
-          </select>
+        <label id="pcCustoCreditoWrap" style="display:flex;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;margin-bottom:14px;font-size:.8rem;color:var(--text-light)">
+          <input type="checkbox" id="pcCustoTomaCredito" checked style="width:16px;height:16px" onchange="atualizarMargensModal()"> Esse custo (sem detalhar por item) toma crédito de imposto
+        </label>
+        <div class="field" style="margin-bottom:14px">
+          <label>Impostos aplicados (marque quantos incidirem — nada de "blend")</label>
+          <div id="pcTributosLista" style="display:flex;flex-direction:column;gap:6px;padding:10px;border:1.5px solid var(--creme-dark);border-radius:8px"></div>
         </div>
-        <button type="button" class="btn-outline btn btn-sm" style="height:38px" onclick="adicionarVariegatoNoPreco()">+ Add</button>
+        <div class="margem-box">
+          <h4>Margem de contribuição (calculada, não é salva — sempre reflete os campos acima)</h4>
+          <div class="margem-grid" id="pcMargensGrid"></div>
+        </div>
+        <div class="field" style="margin:14px 0 0"><label>Vigência a partir de</label><input class="inp" id="pcVigencia" type="date"></div>
       </div>
-      <div class="field" id="pcVariegatoManualWrap" style="margin-top:2px">
-        <label style="font-size:.68rem">Valor manual (R$/kg) — usado só se nenhum variegato acima estiver vinculado</label>
-        <input class="inp" id="pcVariegatoLoja" type="number" step="0.01" min="0" value="0">
-      </div>
-    </div>
-    <label id="pcCustoCreditoWrap" style="display:flex;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;margin-bottom:10px;font-size:.8rem;color:var(--text-light)">
-      <input type="checkbox" id="pcCustoTomaCredito" checked style="width:16px;height:16px" onchange="atualizarMargensModal()"> Esse custo (sem detalhar por item) toma crédito de imposto
-    </label>
-    <details id="pcComposicaoDetails" style="margin-bottom:10px">
-      <summary style="cursor:pointer;font-size:.8rem;color:var(--bordo);font-weight:600">🧮 Compor o custo a partir de insumos de produção</summary>
-      <div style="margin-top:10px;padding:12px;background:var(--creme,#faf6f0);border-radius:8px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <label style="margin:0">Componentes</label>
-          <button type="button" class="btn-outline btn btn-sm" onclick="ordenarInsumosNoPrecoAlfabetico()">🔤 Ordenar A-Z</button>
-        </div>
-        <div id="pcInsumosLista" style="margin-bottom:8px"></div>
-        <div class="row" style="margin-bottom:8px">
-          <div class="field" style="flex:2"><label>Insumo</label>
-            <input class="inp" type="text" id="pcAddInsumo_busca" list="pcAddInsumo_dl" autocomplete="off" placeholder="Digite pra buscar…">
-            <datalist id="pcAddInsumo_dl"></datalist>
-            <input type="hidden" id="pcAddInsumo">
+      <div>
+        <div class="field" id="pcVariegatoWrap" style="margin-bottom:14px;display:none">
+          <label>Variegato Loja — quando a loja compra o variegato à parte (Estoque CD). Pode adicionar mais de um por sabor.</label>
+          <div id="pcVariegatosLista" style="margin-bottom:8px"></div>
+          <div class="row" style="margin-bottom:8px">
+            <div class="field" style="flex:2">
+              <input class="inp" type="text" id="pcVariegatoInsumo_busca" list="pcVariegatoInsumo_dl" autocomplete="off" placeholder="Digite pra buscar variegato…">
+              <datalist id="pcVariegatoInsumo_dl"></datalist>
+              <input type="hidden" id="pcVariegatoInsumo">
+            </div>
+            <div class="field" style="width:80px"><input class="inp" type="number" min="0" step="0.01" id="pcVariegatoAddQtd" value="0" placeholder="Qtd"></div>
+            <div class="field" style="width:70px">
+              <select class="inp" id="pcVariegatoAddUnidade">
+                <option value="g">g</option>
+                <option value="kg">kg</option>
+              </select>
+            </div>
+            <button type="button" class="btn-outline btn btn-sm" style="height:38px" onclick="adicionarVariegatoNoPreco()">+ Add</button>
           </div>
-          <div class="field" style="width:80px"><label>Qtd</label><input class="inp" id="pcAddInsumoQtd" type="number" min="0.001" step="0.001" value="1"></div>
-          <button type="button" class="btn-outline btn btn-sm" style="height:38px" onclick="adicionarInsumoNoPreco()">+ Add</button>
+          <div class="field" id="pcVariegatoManualWrap" style="margin-top:2px">
+            <label style="font-size:.68rem">Valor manual (R$/kg) — usado só se nenhum variegato acima estiver vinculado</label>
+            <input class="inp" id="pcVariegatoLoja" type="number" step="0.01" min="0" value="0">
+          </div>
         </div>
-        <p class="hint" id="pcComposicaoResumo" style="margin:0"></p>
+        <details id="pcComposicaoDetails" open style="margin-bottom:10px;border:1.5px solid var(--creme-dark);border-radius:8px;padding:10px 12px">
+          <summary style="cursor:pointer;font-size:.85rem;color:var(--bordo);font-weight:600">🧮 Compor o custo a partir de insumos de produção</summary>
+          <div style="margin-top:10px;padding:12px;background:var(--creme,#faf6f0);border-radius:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <label style="margin:0">Componentes</label>
+              <button type="button" class="btn-outline btn btn-sm" onclick="ordenarInsumosNoPrecoAlfabetico()">🔤 Ordenar A-Z</button>
+            </div>
+            <div id="pcInsumosLista" style="margin-bottom:8px"></div>
+            <div class="row" style="margin-bottom:8px">
+              <div class="field" style="flex:2"><label>Insumo</label>
+                <input class="inp" type="text" id="pcAddInsumo_busca" list="pcAddInsumo_dl" autocomplete="off" placeholder="Digite pra buscar…">
+                <datalist id="pcAddInsumo_dl"></datalist>
+                <input type="hidden" id="pcAddInsumo">
+              </div>
+              <div class="field" style="width:80px"><label>Qtd</label><input class="inp" id="pcAddInsumoQtd" type="number" min="0.001" step="0.001" value="1"></div>
+              <button type="button" class="btn-outline btn btn-sm" style="height:38px" onclick="adicionarInsumoNoPreco()">+ Add</button>
+            </div>
+            <p class="hint" id="pcComposicaoResumo" style="margin:0"></p>
+          </div>
+        </details>
       </div>
-    </details>
-    <div class="field" style="margin-bottom:10px">
-      <label>Impostos aplicados (marque quantos incidirem — nada de "blend")</label>
-      <div id="pcTributosLista" style="display:flex;flex-direction:column;gap:6px;padding:10px;border:1.5px solid var(--creme-dark);border-radius:8px"></div>
     </div>
-    <div class="margem-box">
-      <h4>Margem de contribuição (calculada, não é salva — sempre reflete os campos acima)</h4>
-      <div class="margem-grid" id="pcMargensGrid"></div>
-    </div>
-    <div class="field" style="margin-bottom:0"><label>Vigência a partir de</label><input class="inp" id="pcVigencia" type="date"></div>
     <div class="msg" id="precoMsg"></div>
     <div class="modal-actions"><button class="btn" onclick="salvarPreco()" id="btnSalvarPreco">Salvar</button></div>
     <button class="modal-close" onclick="fecharModal('modalPreco')">Cancelar</button>
