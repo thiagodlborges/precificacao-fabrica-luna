@@ -1795,9 +1795,10 @@ function calcularAlertaCombo(somaIndividual, precoCombo){
 function margemHtml(custo, precoVenda){
   custo = Number(custo)||0; precoVenda = Number(precoVenda)||0;
   if(precoVenda <= 0) return '—';
-  const margemPct = (precoVenda - custo) / precoVenda * 100;
+  const margemR = precoVenda - custo;
+  const margemPct = margemR / precoVenda * 100;
   const cor = margemPct < 0 ? 'var(--bordo)' : (margemPct < 30 ? '#b8860b' : 'var(--verde,#2e7d32)');
-  return '<span style="color:'+cor+'">'+fmtPct(margemPct)+'</span>';
+  return '<span style="color:'+cor+'">'+fmtMoeda(margemR)+' <span style="font-size:.82em;opacity:.85">('+fmtPct(margemPct)+')</span></span>';
 }
 
 function atualizarMargemPrecoLive(id){
