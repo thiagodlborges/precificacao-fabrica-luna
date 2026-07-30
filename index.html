@@ -2185,7 +2185,7 @@ async function renderAprovacoes(){
   el.innerHTML = '<div class="loading">Carregando…</div>';
 
   const [precosR, tributosR, combosR, comboItensR, itemPrecosR] = await Promise.all([
-    sb.from('precificacao_precos').select('*, precificacao_produtos(nome), precificacao_tributos(categoria, tipo_tributo, aliquota, aliquota_credito)').in('status', ['pendente','rejeitado']).in('elo', MEUS_ELOS).order('status').order('criado_em', { ascending:false }),
+    sb.from('precificacao_precos').select('*, precificacao_produtos(nome)').in('status', ['pendente','rejeitado']).in('elo', MEUS_ELOS).order('status').order('criado_em', { ascending:false }),
     sb.from('precificacao_tributos').select('*').in('status', ['pendente','rejeitado']).in('elo', MEUS_ELOS).order('status').order('criado_em', { ascending:false }),
     sb.from('precificacao_combo_precos').select('*, precificacao_combos(nome), precificacao_tributos(tipo_tributo, aliquota, aliquota_credito)').in('status', ['pendente','rejeitado']).order('status').order('criado_em', { ascending:false }),
     sb.from('precificacao_combo_itens').select('*'),
@@ -2207,16 +2207,33 @@ async function renderAprovacoes(){
   const comboPend = combos.filter(c => c.status==='pendente');
   const comboRej = combos.filter(c => c.status==='rejeitado');
 
+  // Um preço pode ter VÁRIOS tributos vinculados (N:N, precificacao_preco_tributos) — o campo
+  // legado tributo_aplicado_id só guarda o primeiro marcado e NÃO deve ser usado pra calcular
+  // margem (mesmo bug que já foi corrigido na tela de Preços). Busca e soma todos aqui também.
+  const precoIds = precos.map(p => p.id);
+  const tributosPorPreco = {};
+  if(precoIds.length){
+    const { data: tribLinks } = await sb.from('precificacao_preco_tributos').select('preco_id, precificacao_tributos(tipo_tributo, aliquota, aliquota_credito)').in('preco_id', precoIds);
+    (tribLinks || []).forEach(t => {
+      if(!t.precificacao_tributos) return;
+      const s = tributosPorPreco[t.preco_id] || (tributosPorPreco[t.preco_id] = { debito:0, credito:0, nomes:[] });
+      s.debito += Number(t.precificacao_tributos.aliquota) || 0;
+      s.credito += Number(t.precificacao_tributos.aliquota_credito) || 0;
+      s.nomes.push(t.precificacao_tributos.tipo_tributo+' ('+fmtPct(t.precificacao_tributos.aliquota)+')');
+    });
+  }
+
   const acoes = (tabela, id) => souMaster
     ? '<button class="btn-outline btn btn-sm" onclick="aprovarRejeitar(\''+tabela+'\',\''+id+'\',\'aprovado\')">Aprovar</button> '+
       '<button class="btn-danger" onclick="aprovarRejeitar(\''+tabela+'\',\''+id+'\',\'rejeitado\')">Rejeitar</button>'
     : '<span class="badge badge-pendente">Aguardando</span>';
 
   const tabelaPrecos = (lista, comAcao) => !lista.length ? '<div class="empty">Nada aqui.</div>' :
-    '<div style="overflow-x:auto"><table><thead><tr><th>Produto</th><th>Elo</th><th>Custo</th><th>Preço Venda</th><th>MC Bruta</th><th>MC Líquida</th><th>Tributo</th><th>Vigência</th><th>Proposto por</th>'+(comAcao?'<th></th>':'')+'</tr></thead><tbody>'+
+    '<div style="overflow-x:auto"><table><thead><tr><th>Produto</th><th>Elo</th><th>Custo</th><th>Preço Venda</th><th>MC Bruta</th><th>MC Líquida</th><th>Tributos</th><th>Vigência</th><th>Proposto por</th>'+(comAcao?'<th></th>':'')+'</tr></thead><tbody>'+
       lista.map(row => {
-        const aliquotaD = row.precificacao_tributos ? Number(row.precificacao_tributos.aliquota)||0 : 0;
-        const aliquotaC = row.precificacao_tributos ? Number(row.precificacao_tributos.aliquota_credito)||0 : 0;
+        const soma = tributosPorPreco[row.id];
+        const aliquotaD = soma ? soma.debito : 0;
+        const aliquotaC = soma ? soma.credito : 0;
         return '<tr>'+
         '<td>'+esc(row.precificacao_produtos ? row.precificacao_produtos.nome : '—')+'</td>'+
         '<td><span class="badge badge-tipo">'+ELO_LABEL[row.elo]+'</span></td>'+
@@ -2226,7 +2243,7 @@ async function renderAprovacoes(){
           : '<td>'+fmtMoeda(row.custo)+'</td><td>'+fmtMoeda(row.preco_venda)+'</td>')+
         '<td class="mc-cell" id="apMcBruta_'+row.id+'">'+mcBrutaHtml(row.custo, row.preco_venda)+'</td>'+
         '<td class="mc-cell" id="apMcLiquida_'+row.id+'">'+mcLiquidaHtml(row.custo, row.preco_venda, aliquotaD, aliquotaC)+'</td>'+
-        '<td>'+(row.precificacao_tributos ? esc(row.precificacao_tributos.tipo_tributo)+' ('+fmtPct(row.precificacao_tributos.aliquota)+')' : '—')+'</td>'+
+        '<td style="font-size:.78rem">'+(soma && soma.nomes.length ? esc(soma.nomes.join(', ')) : '—')+'</td>'+
         (comAcao && souMaster
           ? '<td><input class="inp" style="width:130px" id="apVigencia_'+row.id+'" type="date" value="'+row.vigencia_inicio+'"></td>'
           : '<td>'+fmtData(row.vigencia_inicio)+'</td>')+
