@@ -1797,8 +1797,7 @@ function margemHtml(custo, precoVenda){
   if(precoVenda <= 0) return '—';
   const margemR = precoVenda - custo;
   const margemPct = margemR / precoVenda * 100;
-  const cor = margemPct < 0 ? 'var(--bordo)' : (margemPct < 30 ? '#b8860b' : 'var(--verde,#2e7d32)');
-  return '<span style="color:'+cor+'">'+fmtMoeda(margemR)+' <span style="font-size:.82em;opacity:.85">('+fmtPct(margemPct)+')</span></span>';
+  return '<span class="r'+(margemR<0?' neg':'')+'">'+fmtMoeda(margemR)+'</span><span class="p">'+fmtPct(margemPct)+'</span>';
 }
 
 function atualizarMargemPrecoLive(id){
@@ -2215,7 +2214,7 @@ async function renderAprovacoes(){
           ? '<td><input class="inp" style="width:90px" id="apCusto_'+row.id+'" type="number" step="0.01" value="'+row.custo+'" oninput="atualizarMargemPrecoLive(\''+row.id+'\')"></td>'+
             '<td><input class="inp" style="width:90px" id="apPreco_'+row.id+'" type="number" step="0.01" value="'+row.preco_venda+'" oninput="atualizarMargemPrecoLive(\''+row.id+'\')"></td>'
           : '<td>'+fmtMoeda(row.custo)+'</td><td>'+fmtMoeda(row.preco_venda)+'</td>')+
-        '<td id="apMargem_'+row.id+'">'+margemHtml(row.custo, row.preco_venda)+'</td>'+
+        '<td class="mc-cell" id="apMargem_'+row.id+'">'+margemHtml(row.custo, row.preco_venda)+'</td>'+
         '<td>'+(row.precificacao_tributos ? esc(row.precificacao_tributos.tipo_tributo)+' ('+fmtPct(row.precificacao_tributos.aliquota)+')' : '—')+'</td>'+
         (comAcao && souMaster
           ? '<td><input class="inp" style="width:130px" id="apVigencia_'+row.id+'" type="date" value="'+row.vigencia_inicio+'"></td>'
