@@ -163,6 +163,10 @@
     <label id="pdAtivoWrap" style="display:none;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer">
       <input type="checkbox" id="pdAtivo" style="width:16px;height:16px" checked> Produto ativo
     </label>
+    <label id="pdDisponivelWrap" style="display:none;align-items:center;gap:8px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;margin-top:8px">
+      <input type="checkbox" id="pdDisponivel" style="width:16px;height:16px"> Disponível para pedido de loja
+    </label>
+    <p class="hint" id="pdDisponivelHint" style="display:none;margin-top:2px">Controla se esse produto aparece no formulário de pedido que as lojas usam pra repor com a fábrica. Trocas de sabor não são afetadas por aqui.</p>
 
     <div id="pdInsumosSection" style="display:none;margin-top:16px">
       <label>Composição do custo (insumos de produção — soma automaticamente)</label>
@@ -663,11 +667,12 @@ function renderProdutosTabela(){
   $('produtosTabela').innerHTML = categorias.map(cat => {
     const itens = porCategoria[cat];
     return '<h2 style="margin:20px 0 8px">'+esc(cat)+'</h2>'+
-    '<div class="table-wrap"><table><thead><tr><th>Nome</th><th>Origem</th><th>Status</th><th></th></tr></thead><tbody>'+
+    '<div class="table-wrap"><table><thead><tr><th>Nome</th><th>Origem</th><th>Pedido de loja</th><th>Status</th><th></th></tr></thead><tbody>'+
       itens.map(p => (
         '<tr class="'+(p.ativo?'':'inativo')+'">'+
           '<td>'+esc(p.nome)+'</td>'+
           '<td><span class="badge badge-tipo">'+(ORIGEM_LABEL[p.origem]||p.origem)+'</span></td>'+
+          '<td><span class="badge '+(p.disponivel_pedido_loja?'badge-ativo':'badge-inativo')+'" style="cursor:pointer" title="Clique pra alternar" onclick="toggleDisponivelProduto(\''+p.id+'\','+(!p.disponivel_pedido_loja)+')">'+(p.disponivel_pedido_loja?'✅ Disponível':'— Indisponível')+'</span></td>'+
           '<td>'+(p.ativo?'<span class="badge badge-ativo">Ativo</span>':'<span class="badge badge-inativo">Inativo</span>')+'</td>'+
           '<td style="white-space:nowrap">'+
             '<button class="btn-outline btn btn-sm" onclick="abrirEditarProduto(\''+p.id+'\')">Editar</button> '+
@@ -687,6 +692,7 @@ function abrirNovoProduto(){
   $('tituloProduto').textContent = 'Novo Produto';
   $('pdNome').value=''; $('pdCategoria').value=''; $('pdOrigem').value='fabrica';
   $('pdAtivoWrap').style.display = 'none';
+  $('pdDisponivelWrap').style.display = 'none'; $('pdDisponivelHint').style.display = 'none'; $('pdDisponivel').checked = false;
   $('pdInsumosSection').style.display = 'none';
   showMsg('produtoMsg','','');
   $('modalProduto').classList.add('show');
@@ -699,6 +705,8 @@ async function abrirEditarProduto(id){
   $('tituloProduto').textContent = 'Editar Produto';
   $('pdNome').value = p.nome; $('pdCategoria').value = p.categoria; $('pdOrigem').value = p.origem;
   $('pdAtivoWrap').style.display = 'flex'; $('pdAtivo').checked = !!p.ativo;
+  $('pdDisponivelWrap').style.display = 'flex'; $('pdDisponivelHint').style.display = 'block';
+  $('pdDisponivel').checked = !!p.disponivel_pedido_loja;
   showMsg('produtoMsg','','');
   $('modalProduto').classList.add('show');
 
@@ -740,7 +748,10 @@ async function salvarProduto(){
   if(!nome || !categoria){ showMsg('produtoMsg','Preencha nome e categoria.','err'); return; }
 
   const payload = { nome, categoria, origem };
-  if(produtoEditandoId) payload.ativo = $('pdAtivo').checked;
+  if(produtoEditandoId){
+    payload.ativo = $('pdAtivo').checked;
+    payload.disponivel_pedido_loja = $('pdDisponivel').checked;
+  }
 
   const btn = $('btnSalvarProduto');
   btn.disabled = true; btn.textContent = 'Salvando…';
@@ -748,7 +759,7 @@ async function salvarProduto(){
   if(produtoEditandoId){
     ({ error } = await sb.from('precificacao_produtos').update(payload).eq('id', produtoEditandoId));
   } else {
-    ({ error } = await sb.from('precificacao_produtos').insert({ ...payload, ativo: true }));
+    ({ error } = await sb.from('precificacao_produtos').insert({ ...payload, ativo: true, disponivel_pedido_loja: false }));
   }
   btn.disabled = false; btn.textContent = 'Salvar';
   if(error){ showMsg('produtoMsg','Erro: '+error.message,'err'); return; }
@@ -758,6 +769,12 @@ async function salvarProduto(){
 
 async function toggleAtivoProduto(id, novoValor){
   const { error } = await sb.from('precificacao_produtos').update({ ativo: novoValor }).eq('id', id);
+  if(error){ alert('Erro: '+error.message); return; }
+  renderProdutos();
+}
+
+async function toggleDisponivelProduto(id, novoValor){
+  const { error } = await sb.from('precificacao_produtos').update({ disponivel_pedido_loja: novoValor }).eq('id', id);
   if(error){ alert('Erro: '+error.message); return; }
   renderProdutos();
 }
