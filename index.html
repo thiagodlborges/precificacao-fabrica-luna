@@ -137,6 +137,7 @@
   <div class="tab" id="tabAprovacoes" data-tab="aprovacoes" onclick="mudarTab('aprovacoes')">✅ Aprovações<span id="badgePendentes"></span></div>
   <div class="tab" id="tabRelatorio" data-tab="relatorio" onclick="mudarTab('relatorio')">🧾 Relatório</div>
   <div class="tab" id="tabConfigMargem" data-tab="configmargem" onclick="mudarTab('configmargem')">⚙ Alertas de Margem<span id="badgeAlertasMargem"></span></div>
+  <div class="tab" id="tabCadeiaComercial" data-tab="cadeiacomercial" onclick="mudarTab('cadeiacomercial')" style="display:none">🔗 Cadeia Comercial</div>
 </nav>
 
 <main id="mainContent"><div class="loading">Carregando…</div></main>
@@ -395,6 +396,7 @@ const ORIGEM_LABEL = { fabrica: 'Fábrica', fabrica_insumo: 'Insumo (só peso)',
 let meuPerfil = null;
 let souMaster = false;
 let souBackofficePrecificacao = false;
+let souSimuladorComercial = false;
 let currentTab = 'produtos';
 
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -603,12 +605,27 @@ async function verificarAcessoEIniciar(){
 
   souMaster = perfil.tipo === 'master';
   const souBackoffice = souMaster || perfil.precificacao_fabrica_backoffice === true;
-  if (!souBackoffice) { await sb.auth.signOut(); window.location.href = PORTAL_URL; return; }
+  souSimuladorComercial = souMaster || perfil.simulador_comercial_acesso === true;
+  if (!souBackoffice && !souSimuladorComercial) { await sb.auth.signOut(); window.location.href = PORTAL_URL; return; }
   souBackofficePrecificacao = souBackoffice;
 
   meuPerfil = perfil;
   document.getElementById('appRoot').style.display = 'block';
   document.getElementById('carregandoOverlay').remove();
+
+  if (souSimuladorComercial) {
+    $('tabCadeiaComercial').style.display = '';
+  }
+
+  if (!souBackoffice && souSimuladorComercial) {
+    // Acesso restrito só ao simulador comercial (ex: Umberto) — esconde todo o resto do módulo.
+    ['tabProdutos','tabTributos','tabPrecos','tabInsumos','tabSubreceitas','tabAprovacoes','tabRelatorio','tabConfigMargem'].forEach(id => { $(id).style.display = 'none'; });
+    currentTab = 'cadeiacomercial';
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab==='cadeiacomercial'));
+    renderTab();
+    return;
+  }
+
   renderTab();
   atualizarBadgePendentes();
   atualizarBadgeAlertasMargem();
@@ -655,6 +672,7 @@ function renderTab(){
   else if(currentTab==='aprovacoes') renderAprovacoes();
   else if(currentTab==='relatorio') renderRelatorio();
   else if(currentTab==='configmargem') renderConfigMargem();
+  else if(currentTab==='cadeiacomercial') renderCadeiaComercial();
 }
 
 // ── PRODUTOS ───────────────────────────────────────────────
@@ -2576,6 +2594,161 @@ async function marcarAlertaLido(id){
   if(error){ alert('Erro ao marcar como lido: '+error.message); return; }
   renderConfigMargem();
   atualizarBadgeAlertasMargem();
+}
+
+// ── CADEIA COMERCIAL (simulador de remuneração — representação/revenda) ──
+// Só master e Umberto veem esta aba. Percentuais somam sempre 100% do preço
+// final ao consumidor (PDV): Margem do PDV + Comissão do representante externo
+// + Override do representante interno + o que sobra pra Luna = preço de fábrica.
+let cadeiaComercialConfig = { margemPdv: 35, comissaoExterno: 5, overrideInterno: 1.5 };
+
+async function renderCadeiaComercial(){
+  const el = $('mainContent');
+  el.innerHTML = '<div class="card"><div class="loading">Carregando…</div></div>';
+
+  const [{ data: produtos, error: errP }, { data: precos, error: errPr }] = await Promise.all([
+    sb.from('precificacao_produtos').select('id, nome, categoria').eq('ativo', true).in('origem', ['fabrica','fabrica_insumo']).order('categoria').order('nome'),
+    sb.from('precificacao_precos').select('produto_id, preco_venda, vigencia_inicio').eq('elo','fabrica_loja').eq('status','aprovado'),
+  ]);
+
+  if(errP || errPr){ el.innerHTML = '<div class="card"><div class="empty">Erro ao carregar: '+esc((errP||errPr).message)+'</div></div>'; return; }
+
+  // Preço de fábrica vigente por produto (mais recente aprovado)
+  const precoPorProduto = {};
+  (precos||[]).forEach(p => {
+    const atual = precoPorProduto[p.produto_id];
+    if(!atual || p.vigencia_inicio > atual.vigencia_inicio) precoPorProduto[p.produto_id] = p;
+  });
+
+  const linhas = (produtos||[])
+    .map(p => ({ id: p.id, nome: p.nome, categoria: p.categoria, precoFabrica: precoPorProduto[p.id] ? Number(precoPorProduto[p.id].preco_venda) : null }))
+    .filter(l => l.precoFabrica != null);
+
+  window.__cadeiaComercialCache = linhas;
+
+  const c = cadeiaComercialConfig;
+  const lunaPct = 100 - c.margemPdv - c.comissaoExterno - c.overrideInterno;
+
+  el.innerHTML = `
+    <div class="card">
+      <h2>Cadeia Comercial — Simulador de Remuneração</h2>
+      <p class="hint">Representação comercial e revenda: parte do preço de fábrica (o que a Luna já cobra hoje) e calcula o preço final ao consumidor no PDV, junto com a fatia de cada elo da cadeia. Todos os percentuais incidem sobre o preço final ao consumidor.</p>
+      <div class="row" style="align-items:flex-end;gap:16px;flex-wrap:wrap">
+        <div class="field"><label>Margem do PDV / revenda (%)</label><input type="number" step="0.1" class="inp" id="ccMargemPdv" value="${c.margemPdv}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
+        <div class="field"><label>Comissão representante externo (%)</label><input type="number" step="0.1" class="inp" id="ccComissaoExterno" value="${c.comissaoExterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
+        <div class="field"><label>Override representante interno (%)</label><input type="number" step="0.1" class="inp" id="ccOverrideInterno" value="${c.overrideInterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
+        <div class="field"><label>Sobra pra Luna (%)</label><input type="text" class="inp" id="ccLunaPct" value="${fmtPct(lunaPct)}" disabled style="width:120px;font-weight:600"></div>
+      </div>
+      <div id="ccConfigMsg" class="msg"></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Simulação avulsa</h2>
+      </div>
+      <p class="hint">Testa um preço de fábrica hipotético, sem precisar de um produto cadastrado.</p>
+      <div class="row" style="align-items:flex-end">
+        <div class="field"><label>Preço de fábrica (R$)</label><input type="number" step="0.01" class="inp" id="ccPrecoAvulso" placeholder="Ex: 10,00" style="width:160px" oninput="atualizarSimulacaoAvulsa()"></div>
+      </div>
+      <div id="ccAvulsoResultado"></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Todos os produtos da fábrica</h2>
+        <button class="btn-outline btn btn-sm" onclick="exportarCadeiaComercialCSV()">⬇ Exportar CSV</button>
+      </div>
+      <div id="ccTabela"></div>
+    </div>`;
+
+  renderTabelaCadeiaComercial();
+  atualizarSimulacaoAvulsa();
+}
+
+function calcularCadeiaComercial(precoFabrica){
+  const c = cadeiaComercialConfig;
+  const lunaPct = 100 - c.margemPdv - c.comissaoExterno - c.overrideInterno;
+  if(lunaPct <= 0) return null;
+  const precoConsumidor = precoFabrica / (lunaPct/100);
+  return {
+    precoConsumidor,
+    margemPdvR: precoConsumidor * (c.margemPdv/100),
+    comissaoExternoR: precoConsumidor * (c.comissaoExterno/100),
+    overrideInternoR: precoConsumidor * (c.overrideInterno/100),
+    lunaR: precoFabrica,
+    lunaPct,
+  };
+}
+
+function atualizarConfigCadeiaComercial(){
+  const margemPdv = Number($('ccMargemPdv').value) || 0;
+  const comissaoExterno = Number($('ccComissaoExterno').value) || 0;
+  const overrideInterno = Number($('ccOverrideInterno').value) || 0;
+  const lunaPct = 100 - margemPdv - comissaoExterno - overrideInterno;
+
+  $('ccLunaPct').value = fmtPct(lunaPct);
+  showMsg('ccConfigMsg','','');
+  if(lunaPct <= 0){
+    showMsg('ccConfigMsg','A soma dos percentuais não pode chegar a 100% ou mais — não sobraria nada pra Luna.','err');
+    return;
+  }
+  cadeiaComercialConfig = { margemPdv, comissaoExterno, overrideInterno };
+  renderTabelaCadeiaComercial();
+  atualizarSimulacaoAvulsa();
+}
+
+function renderTabelaCadeiaComercial(){
+  const el = $('ccTabela');
+  const linhas = window.__cadeiaComercialCache || [];
+  if(!linhas.length){ el.innerHTML = '<div class="empty">Nenhum produto de fábrica com preço aprovado ainda.</div>'; return; }
+
+  const porCategoria = {};
+  linhas.forEach(l => { (porCategoria[l.categoria] = porCategoria[l.categoria] || []).push(l); });
+
+  el.innerHTML = Object.keys(porCategoria).sort().map(cat => {
+    const itens = porCategoria[cat].sort((a,b) => a.nome.localeCompare(b.nome));
+    return '<h3 style="font-family:\'Cormorant Garamond\',serif;font-size:1.05rem;color:var(--bordo-dark);margin:16px 0 8px">'+esc(cat)+'</h3>'+
+    '<div style="overflow-x:auto"><table><thead><tr><th>Produto</th><th>Preço fábrica (Luna)</th><th>Preço ao consumidor (PDV)</th><th>Margem PDV</th><th>Comissão externo</th><th>Override interno</th></tr></thead><tbody>'+
+      itens.map(l => {
+        const r = calcularCadeiaComercial(l.precoFabrica);
+        if(!r) return '';
+        return '<tr><td>'+esc(l.nome)+'</td><td>'+fmtMoeda(l.precoFabrica)+'</td><td><strong>'+fmtMoeda(r.precoConsumidor)+'</strong></td>'+
+          '<td>'+fmtMoeda(r.margemPdvR)+'</td><td>'+fmtMoeda(r.comissaoExternoR)+'</td><td>'+fmtMoeda(r.overrideInternoR)+'</td></tr>';
+      }).join('')+
+    '</tbody></table></div>';
+  }).join('');
+}
+
+function atualizarSimulacaoAvulsa(){
+  const el = $('ccAvulsoResultado');
+  const preco = Number($('ccPrecoAvulso').value);
+  if(!preco || preco <= 0){ el.innerHTML = ''; return; }
+  const r = calcularCadeiaComercial(preco);
+  if(!r){ el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="dash-grid" style="margin-top:12px">
+    <div class="dash-card"><div class="lbl">Preço ao consumidor (PDV)</div><div class="val">${fmtMoeda(r.precoConsumidor)}</div></div>
+    <div class="dash-card"><div class="lbl">Margem do PDV/revenda</div><div class="val">${fmtMoeda(r.margemPdvR)}</div></div>
+    <div class="dash-card"><div class="lbl">Comissão representante externo</div><div class="val">${fmtMoeda(r.comissaoExternoR)}</div></div>
+    <div class="dash-card"><div class="lbl">Override representante interno</div><div class="val">${fmtMoeda(r.overrideInternoR)}</div></div>
+    <div class="dash-card"><div class="lbl">Fica com a Luna (preço de fábrica)</div><div class="val">${fmtMoeda(r.lunaR)}</div></div>
+  </div>`;
+}
+
+function exportarCadeiaComercialCSV(){
+  const linhas = window.__cadeiaComercialCache || [];
+  if(!linhas.length) return;
+  const num = v => v.toFixed(2).replace('.',',');
+  const header = 'Categoria;Produto;Preco Fabrica (Luna);Preco Consumidor (PDV);Margem PDV;Comissao Externo;Override Interno\n';
+  const corpo = linhas.map(l => {
+    const r = calcularCadeiaComercial(l.precoFabrica);
+    return [l.categoria, l.nome, num(l.precoFabrica), num(r.precoConsumidor), num(r.margemPdvR), num(r.comissaoExternoR), num(r.overrideInternoR)]
+      .map(v => '"'+String(v).replace(/"/g,'""')+'"').join(';');
+  }).join('\n');
+  const blob = new Blob(['\uFEFF'+header+corpo], { type:'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'cadeia-comercial-'+hojeISO()+'.csv';
+  a.click();
 }
 
 verificarAcessoEIniciar();
