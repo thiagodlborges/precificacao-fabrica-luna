@@ -1453,7 +1453,7 @@ async function renderPrecos(){
 
   try {
     const [prodR, precoR, tribLinksR, variegatosR] = await Promise.all([
-      sb.from('precificacao_produtos').select('*').eq('ativo', true).order('categoria').order('nome'),
+      sb.from('precificacao_produtos').select('*').order('categoria').order('nome'),
       sb.from('precificacao_precos').select('*'),
       sb.from('precificacao_preco_tributos').select('preco_id, precificacao_tributos(tipo_tributo, aliquota, aliquota_credito)'),
       sb.from('precificacao_preco_variegatos').select('*'),
@@ -1521,7 +1521,7 @@ function renderPrecosTabela(){
   if(termo) produtosFiltrados = produtosFiltrados.filter(p => p.nome.toLowerCase().includes(termo));
 
   if(!produtosFiltrados.length){
-    el.innerHTML = subnav + buscaHtml + '<div class="card"><div class="empty">'+(termo ? 'Nenhum produto encontrado pra "'+esc(termo)+'".' : 'Nenhum produto ativo com esse elo ainda.')+'</div></div>';
+    el.innerHTML = subnav + buscaHtml + '<div class="card"><div class="empty">'+(termo ? 'Nenhum produto encontrado pra "'+esc(termo)+'".' : 'Nenhum produto cadastrado com esse elo ainda.')+'</div></div>';
     return;
   }
 
@@ -1535,8 +1535,8 @@ function renderPrecosTabela(){
       const row = precoVigenteDe(todosPrecos, p.id, precosEloAtual);
       const tributosPreco = row ? (somaTributosPorPreco[row.id] || []) : [];
       const m = row ? calcularMargens(row.custo, row.preco_venda, tributosPreco) : null;
-      return '<tr>'+
-        '<td>'+esc(p.nome)+'</td>'+
+      return '<tr class="'+(p.ativo?'':'inativo')+'">'+
+        '<td>'+esc(p.nome)+(p.ativo?'':' <span class="badge badge-inativo" style="font-size:.7em">Inativo</span>')+'</td>'+
         '<td>'+(row?fmtMoeda(row.custo):'—')+'</td>'+
         '<td>'+(row?fmtMoeda(row.preco_venda):'—')+'</td>'+
         (ehGelato ? '<td>'+resolverVariegatoTexto(row)+'</td>' : '')+
@@ -2454,7 +2454,7 @@ async function renderRelatorio(){
   el.innerHTML = subnav+'<div class="loading">Carregando…</div>';
 
   const [prodR, precoR, tribLinksR] = await Promise.all([
-    sb.from('precificacao_produtos').select('*').eq('ativo', true).order('categoria').order('nome'),
+    sb.from('precificacao_produtos').select('*').order('categoria').order('nome'),
     sb.from('precificacao_precos').select('*').eq('status','aprovado'),
     sb.from('precificacao_preco_tributos').select('preco_id, precificacao_tributos(tipo_tributo, aliquota, aliquota_credito)'),
   ]);
@@ -2472,11 +2472,11 @@ async function renderRelatorio(){
 
   const linhas = produtos.map(p => {
     const row = precoVigenteDe(todosPrecos, p.id, relatorioEloAtual);
-    if(!row) return { categoria: p.categoria, nome: p.nome, custo: null, preco: null, vigencia: null };
+    if(!row) return { categoria: p.categoria, nome: p.nome, ativo: p.ativo, custo: null, preco: null, vigencia: null };
     const tributosPreco = somaTributosPorPreco[row.id] || [];
     const m = calcularMargens(row.custo, row.preco_venda, tributosPreco);
     return {
-      categoria: p.categoria, nome: p.nome,
+      categoria: p.categoria, nome: p.nome, ativo: p.ativo,
       custo: Number(row.custo), preco: Number(row.preco_venda), vigencia: row.vigencia_inicio,
       mcBrutaR: m.mcBrutaR, mcBrutaPct: m.mcBrutaPct, mcLiquidaR: m.mcLiquidaR, mcLiquidaPct: m.mcLiquidaPct,
     };
@@ -2500,8 +2500,10 @@ async function renderRelatorio(){
     '</div>'+
     categorias.map(cat => {
       const itens = porCategoria[cat].sort((a,b) => a.nome.localeCompare(b.nome));
-      return '<div class="card"><h2>'+esc(cat)+'</h2><div style="overflow-x:auto"><table><thead><tr><th>Produto</th><th>Custo</th><th>Preço</th><th>Margem Bruta (R$)</th><th>Margem Bruta (%)</th><th>Margem Líquida (R$)</th><th>Margem Líquida (%)</th><th>Vigente desde</th></tr></thead><tbody>'+
-        itens.map(l => '<tr><td>'+esc(l.nome)+'</td><td>'+(l.custo!=null?fmtMoeda(l.custo):'—')+'</td><td>'+fmtMoeda(l.preco)+'</td>'+
+      return '<div class="card"><h2>'+esc(cat)+'</h2><div style="overflow-x:auto"><table><thead><tr><th>Produto</th><th>Status</th><th>Custo</th><th>Preço</th><th>Margem Bruta (R$)</th><th>Margem Bruta (%)</th><th>Margem Líquida (R$)</th><th>Margem Líquida (%)</th><th>Vigente desde</th></tr></thead><tbody>'+
+        itens.map(l => '<tr class="'+(l.ativo?'':'inativo')+'"><td>'+esc(l.nome)+'</td>'+
+          '<td>'+(l.ativo?'<span class="badge badge-ativo">Ativo</span>':'<span class="badge badge-inativo">Inativo</span>')+'</td>'+
+          '<td>'+(l.custo!=null?fmtMoeda(l.custo):'—')+'</td><td>'+fmtMoeda(l.preco)+'</td>'+
           '<td class="'+(l.mcBrutaR<0?'neg':'')+'">'+fmtMoeda(l.mcBrutaR)+'</td><td class="'+(l.mcBrutaR<0?'neg':'')+'">'+fmtPct(l.mcBrutaPct)+'</td>'+
           '<td class="'+(l.mcLiquidaR<0?'neg':'')+'">'+fmtMoeda(l.mcLiquidaR)+'</td><td class="'+(l.mcLiquidaR<0?'neg':'')+'">'+fmtPct(l.mcLiquidaPct)+'</td>'+
           '<td>'+fmtData(l.vigencia)+'</td></tr>').join('')+
@@ -2512,11 +2514,18 @@ async function renderRelatorio(){
 function exportarRelatorioCSV(){
   const linhas = window.__relatorioLinhasCache || [];
   if(!linhas.length) return;
-  const header = 'Categoria;Produto;Custo;Preco;Margem Bruta (R$);Margem Bruta (%);Margem Liquida (R$);Margem Liquida (%);Vigente desde\n';
+  const header = 'Categoria;Produto;Status;Custo;Preco;Margem Bruta (R$);Margem Bruta (%);Margem Liquida (R$);Margem Liquida (%);Vigente desde\n';
+  // Campos de TEXTO ficam entre aspas (padrão CSV, protege contra ; e quebras
+  // de linha no meio do valor). Campos NUMÉRICOS saem sem aspas — colocar
+  // aspas em número faz o Excel/Sheets importar como texto, impossibilitando
+  // soma, filtro numérico etc. Vírgula como decimal porque o separador de
+  // campo já é ";", então não há ambiguidade — é o formato numérico padrão
+  // que o Excel em português já espera, sem precisar de nenhuma conversão manual.
+  const txt = v => '"'+String(v==null?'':v).replace(/"/g,'""')+'"';
   const num = v => v!=null ? v.toFixed(2).replace('.',',') : '';
   const corpo = linhas.map(l =>
-    [l.categoria, l.nome, num(l.custo), num(l.preco), num(l.mcBrutaR), num(l.mcBrutaPct), num(l.mcLiquidaR), num(l.mcLiquidaPct), l.vigencia||'']
-      .map(v => '"'+String(v).replace(/"/g,'""')+'"').join(';')
+    [txt(l.categoria), txt(l.nome), txt(l.ativo?'Ativo':'Inativo'), num(l.custo), num(l.preco), num(l.mcBrutaR), num(l.mcBrutaPct), num(l.mcLiquidaR), num(l.mcLiquidaPct), txt(l.vigencia||'')]
+      .join(';')
   ).join('\n');
   const blob = new Blob(['\uFEFF'+header+corpo], { type:'text/csv;charset=utf-8;' });
   const a = document.createElement('a');
@@ -2684,11 +2693,11 @@ function toggleHistoricoCusto(i){
 
 function exportarVariacaoCustosCSV(){
   if(!variacaoCustosCache.length) return;
-  const num = v => v.toFixed(4).replace('.',',');
+  const txt = v => '"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+  const num = v => v!=null ? v.toFixed(4).replace('.',',') : '';
   const header = 'Categoria;Produto;Custo ha 30 dias;Custo atual;Variacao (R$);Variacao (%)\n';
   const corpo = variacaoCustosCache.map(l =>
-    [l.categoria, l.nome, num(l.custoInicial), num(l.custoAtual), num(l.diffR), num(l.diffPct)]
-      .map(v => '"'+String(v).replace(/"/g,'""')+'"').join(';')
+    [txt(l.categoria), txt(l.nome), num(l.custoInicial), num(l.custoAtual), num(l.diffR), num(l.diffPct)].join(';')
   ).join('\n');
   const blob = new Blob(['\uFEFF'+header+corpo], { type:'text/csv;charset=utf-8;' });
   const a = document.createElement('a');
@@ -2944,6 +2953,7 @@ function atualizarSimulacaoAvulsa(){
 function exportarCadeiaComercialCSV(){
   const linhas = window.__cadeiaComercialCache || [];
   if(!linhas.length) return;
+  const txt = v => '"'+String(v==null?'':v).replace(/"/g,'""')+'"';
   const num = v => v.toFixed(2).replace('.',',');
   const comOverride = cadeiaComercialCanal === 'externo';
   const header = 'Canal;Categoria;Produto;Preco Fabrica (Luna);Preco Consumidor (PDV);Margem PDV;'+(comOverride?'Comissao Externo;Override Interno':'Comissao Executivo')+'\n';
@@ -2962,9 +2972,9 @@ function exportarCadeiaComercialCSV(){
       margemR = precoConsumidor * (c.margemPdv/100);
       comissaoR = precoConsumidor * (c.comissaoInterno/100);
     }
-    const campos = [canalLabel, l.categoria, l.nome, num(l.precoFabrica), num(precoConsumidor), num(margemR), num(comissaoR)];
+    const campos = [txt(canalLabel), txt(l.categoria), txt(l.nome), num(l.precoFabrica), num(precoConsumidor), num(margemR), num(comissaoR)];
     if(comOverride) campos.push(num(overrideR));
-    return campos.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(';');
+    return campos.join(';');
   }).join('\n');
   const blob = new Blob(['\uFEFF'+header+corpo], { type:'text/csv;charset=utf-8;' });
   const a = document.createElement('a');
