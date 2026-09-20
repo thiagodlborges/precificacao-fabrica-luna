@@ -3274,7 +3274,8 @@ async function excluirTabelaAlt(id, nome){
 // nesta tabela — cobre tanto a criação da tabela quanto produtos novos
 // cadastrados depois que a tabela já existia.
 async function garantirItensTabelaAlt(tabelaId){
-  const [{ data: produtos }, { data: existentes }] = await Promise.all([
+  const [{ data: tabela }, { data: produtos }, { data: existentes }] = await Promise.all([
+    sb.from('precificacao_tabelas_alternativas').select('tipo, percentual_representacao').eq('id', tabelaId).single(),
     sb.from('precificacao_produtos').select('id').eq('ativo', true).in('origem', ['fabrica','fabrica_insumo']),
     sb.from('precificacao_tabela_alternativa_itens').select('produto_id').eq('tabela_id', tabelaId),
   ]);
@@ -3285,7 +3286,18 @@ async function garantirItensTabelaAlt(tabelaId){
     .eq('elo','fabrica_loja').eq('status','aprovado').in('produto_id', faltantes.map(p => p.id));
   const oficialPorProduto = {};
   (precosOficiais||[]).forEach(p => { const atual = oficialPorProduto[p.produto_id]; if(!atual || p.vigencia_inicio > atual.vigencia_inicio) oficialPorProduto[p.produto_id] = p; });
-  const novos = faltantes.filter(p => oficialPorProduto[p.id]).map(p => ({ tabela_id: tabelaId, produto_id: p.id, preco_venda: Number(oficialPorProduto[p.id].preco_venda) }));
+
+  // Preço inicial: pra tabela "Com Representante", já nasce "engordado" o
+  // suficiente pra que o Preço da Luna (Recomposto) bata exatamente com o
+  // preço oficial — por padrão, a margem da fábrica não pode nascer
+  // corroída, só se alguém editar o preço manualmente depois.
+  const pct = tabela?.percentual_representacao;
+  const comRep = tabela?.tipo === 'com_representante' && pct != null && pct < 100;
+  const novos = faltantes.filter(p => oficialPorProduto[p.id]).map(p => {
+    const precoOficial = Number(oficialPorProduto[p.id].preco_venda);
+    const precoInicial = comRep ? precoOficial / (1 - pct/100) : precoOficial;
+    return { tabela_id: tabelaId, produto_id: p.id, preco_venda: precoInicial };
+  });
   if(novos.length) await sb.from('precificacao_tabela_alternativa_itens').insert(novos);
 }
 
@@ -3316,14 +3328,21 @@ async function abrirTabelaAlt(tabelaId){
   const itemPorProduto = {};
   (itensAlt||[]).forEach(i => { itemPorProduto[i.produto_id] = i; });
 
+  const comRepPct = tabela.tipo === 'com_representante' && tabela.percentual_representacao != null && tabela.percentual_representacao < 100 ? tabela.percentual_representacao : null;
   const linhas = (produtos||[])
     .filter(p => oficialPorProduto[p.id])
-    .map(p => ({
-      id: p.id, nome: p.nome, categoria: p.categoria,
-      precoOficial: Number(oficialPorProduto[p.id].preco_venda),
-      custoOficial: Number(oficialPorProduto[p.id].custo),
-      precoTabela: itemPorProduto[p.id] ? Number(itemPorProduto[p.id].preco_venda) : Number(oficialPorProduto[p.id].preco_venda),
-    }));
+    .map(p => {
+      const precoOficial = Number(oficialPorProduto[p.id].preco_venda);
+      // Fallback defensivo (o item já deveria existir, graças ao
+      // garantirItensTabelaAlt logo acima) — mesma regra de "engordar" pra
+      // Com Representante, senão o Preço da Luna nasceria abaixo do oficial.
+      const precoPadrao = comRepPct != null ? precoOficial / (1 - comRepPct/100) : precoOficial;
+      return {
+        id: p.id, nome: p.nome, categoria: p.categoria,
+        precoOficial, custoOficial: Number(oficialPorProduto[p.id].custo),
+        precoTabela: itemPorProduto[p.id] ? Number(itemPorProduto[p.id].preco_venda) : precoPadrao,
+      };
+    });
 
   window.__tabelaAltCache = linhas;
   const comRep = tabela.tipo === 'com_representante';
