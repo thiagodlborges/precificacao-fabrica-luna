@@ -389,9 +389,9 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const PORTAL_URL = 'https://thiagodlborges.github.io/Sistema-Luna/';
 const $ = id => document.getElementById(id);
 
-const ELOS_POR_ORIGEM = { fabrica: ['fabrica_loja'], fabrica_insumo: ['fabrica_loja'] };
+const ELOS_POR_ORIGEM = { fabrica: ['fabrica_loja', 'representante', 'sem_representante'], fabrica_insumo: ['fabrica_loja', 'representante', 'sem_representante'] };
 const MEUS_ELOS = [...new Set(Object.values(ELOS_POR_ORIGEM).flat())]; // elos que pertencem a este módulo (fábrica) — usado pra restringir tributos e aprovações
-const ELO_LABEL = { fabrica_loja: 'Fábrica → Loja', loja_consumidor: 'Loja → Consumidor', compra_revenda: 'Compra → Revenda', loja_delivery: 'Loja → Delivery' };
+const ELO_LABEL = { fabrica_loja: 'Fábrica → Loja', loja_consumidor: 'Loja → Consumidor', compra_revenda: 'Compra → Revenda', loja_delivery: 'Loja → Delivery', representante: 'Com Representante', sem_representante: 'Sem Representante' };
 const ORIGEM_LABEL = { fabrica: 'Fábrica', fabrica_insumo: 'Insumo (só peso)', revenda: 'Revenda (fornecedor externo)', consumo_loja: 'Feito na loja' };
 
 let meuPerfil = null;
@@ -1433,6 +1433,8 @@ let precosEloAtual = 'fabrica_loja';
 
 const PRECOS_ELO_TABS = [
   { elo: 'fabrica_loja', label: '📦 Fábrica → Loja' },
+  { elo: 'representante', label: '🤝 Com Representante' },
+  { elo: 'sem_representante', label: '🎯 Sem Representante' },
 ];
 
 function precoVigenteDe(todosPrecos, produtoId, elo){
@@ -2721,9 +2723,46 @@ let cadeiaComercialConfig = {
   interno: { margemPdv: 35, comissaoInterno: 3, fixoMensal: 3000 },
 };
 
+// ── Comissão por Faixas de Faturamento (progressiva, tipo tabela do IR) ──
+// Cada faixa vale só pelo pedaço do faturamento que cai DENTRO dela — não é
+// "achou a faixa, aplica o % em tudo". Ex: R$130 mil = 2% de 100 mil + 1,5%
+// de 30 mil, não 1,5% dos 130 mil inteiros. A última faixa fica em aberto:
+// qualquer valor acima do limite dela usa a taxa dela também.
+let faixasComissao = [
+  { ate: 100000,   pct: 2 },
+  { ate: 300000,   pct: 1.5 },
+  { ate: 1000000,  pct: 1 },
+  { ate: 2500000,  pct: 0.5 },
+  { ate: 10000000, pct: 0.25 },
+];
+
 async function renderCadeiaComercial(){
   const el = $('mainContent');
   el.innerHTML = '<div class="card"><div class="loading">Carregando…</div></div>';
+
+  if(cadeiaComercialCanal === 'faixas'){
+    el.innerHTML = `
+      <div class="card">
+        <h2>Cadeia Comercial — Simulador de Remuneração</h2>
+        <p class="hint">Modelos de remuneração pra quem vende os produtos de fábrica.</p>
+        <div class="subnav" style="margin-bottom:0">
+          <div class="subnav-item" onclick="mudarCanalCadeiaComercial('externo')">🔁 Representante Externo (revendedor)</div>
+          <div class="subnav-item" onclick="mudarCanalCadeiaComercial('interno')">🏢 Executivo Interno (venda direta)</div>
+          <div class="subnav-item active" onclick="mudarCanalCadeiaComercial('faixas')">📊 Comissão por Faixas de Faturamento</div>
+        </div>
+      </div>
+      <div class="card" id="ccFaixasConfigCard"></div>
+      <div class="card">
+        <h2>Calculadora</h2>
+        <p class="hint">Informa o faturamento do vendedor no período e mostra quanto de comissão cai em cada faixa.</p>
+        <div class="row" style="align-items:flex-end">
+          <div class="field"><label>Faturamento no período (R$)</label><input type="number" step="0.01" class="inp" id="ccFaturamento" placeholder="Ex: 130000" style="width:220px" oninput="atualizarCalculoFaixas()"></div>
+        </div>
+        <div id="ccFaixasResultado"></div>
+      </div>`;
+    renderConfigFaixas();
+    return;
+  }
 
   const [{ data: produtos, error: errP }, { data: precos, error: errPr }] = await Promise.all([
     sb.from('precificacao_produtos').select('id, nome, categoria').eq('ativo', true).in('origem', ['fabrica','fabrica_insumo']).order('categoria').order('nome'),
@@ -2751,6 +2790,7 @@ async function renderCadeiaComercial(){
       <div class="subnav" style="margin-bottom:0">
         <div class="subnav-item${cadeiaComercialCanal==='externo'?' active':''}" onclick="mudarCanalCadeiaComercial('externo')">🔁 Representante Externo (revendedor)</div>
         <div class="subnav-item${cadeiaComercialCanal==='interno'?' active':''}" onclick="mudarCanalCadeiaComercial('interno')">🏢 Executivo Interno (venda direta)</div>
+        <div class="subnav-item" onclick="mudarCanalCadeiaComercial('faixas')">📊 Comissão por Faixas de Faturamento</div>
       </div>
     </div>
 
@@ -2785,31 +2825,122 @@ function mudarCanalCadeiaComercial(canal){
   renderCadeiaComercial();
 }
 
+function renderConfigFaixas(){
+  const el = $('ccFaixasConfigCard');
+  const faixasOrd = [...faixasComissao].sort((a,b) => a.ate - b.ate);
+  el.innerHTML = `
+    <h3 style="margin-top:0">Faixas e Percentuais</h3>
+    <p class="hint">Cada faixa vale só pelo pedaço do faturamento que cai dentro dela (igual tabela de IR) — não é "achou a faixa, aplica o % em tudo". A última faixa fica em aberto: qualquer valor acima do limite dela usa a taxa dela também.</p>
+    <div class="table-wrap"><table><thead><tr><th>Faixa</th><th>Até (R$)</th><th>Percentual (%)</th><th></th></tr></thead><tbody>
+      ${faixasOrd.map((f, i) => {
+        const de = i === 0 ? 0 : faixasOrd[i-1].ate;
+        const ultima = i === faixasOrd.length - 1;
+        return `<tr>
+          <td style="white-space:nowrap">${fmtMoeda(de)} até ${ultima ? 'acima' : fmtMoeda(f.ate)}</td>
+          <td><input type="number" step="0.01" class="inp" style="width:160px" value="${f.ate}" onchange="atualizarFaixaCampo(${i},'ate',this.value)"></td>
+          <td><input type="number" step="0.01" class="inp" style="width:100px" value="${f.pct}" onchange="atualizarFaixaCampo(${i},'pct',this.value)"></td>
+          <td>${faixasOrd.length > 1 ? '<button class="btn-outline btn btn-sm" onclick="removerFaixa('+i+')">🗑</button>' : ''}</td>
+        </tr>`;
+      }).join('')}
+    </tbody></table></div>
+    <button class="btn-outline btn btn-sm" style="margin-top:10px" onclick="adicionarFaixa()">+ Adicionar faixa</button>
+    <div id="ccFaixasMsg" class="msg"></div>`;
+}
+
+function atualizarFaixaCampo(indiceOrdenado, campo, valor){
+  const faixasOrd = [...faixasComissao].sort((a,b) => a.ate - b.ate);
+  const alvo = faixasOrd[indiceOrdenado];
+  const num = Number(valor);
+  if(isNaN(num) || num < 0){ showMsg('ccFaixasMsg','Informe um valor válido.','err'); return; }
+  alvo[campo] = num;
+  faixasComissao = faixasOrd;
+  renderConfigFaixas();
+  atualizarCalculoFaixas();
+}
+
+function adicionarFaixa(){
+  const faixasOrd = [...faixasComissao].sort((a,b) => a.ate - b.ate);
+  const ultima = faixasOrd[faixasOrd.length - 1];
+  faixasOrd.push({ ate: ultima.ate * 2, pct: ultima.pct });
+  faixasComissao = faixasOrd;
+  renderConfigFaixas();
+  atualizarCalculoFaixas();
+}
+
+function removerFaixa(indiceOrdenado){
+  const faixasOrd = [...faixasComissao].sort((a,b) => a.ate - b.ate);
+  if(faixasOrd.length <= 1) return;
+  faixasOrd.splice(indiceOrdenado, 1);
+  faixasComissao = faixasOrd;
+  renderConfigFaixas();
+  atualizarCalculoFaixas();
+}
+
+function calcularComissaoFaixas(faturamento){
+  const faixasOrd = [...faixasComissao].sort((a,b) => a.ate - b.ate);
+  let restante = faturamento;
+  let limiteAnterior = 0;
+  let totalComissao = 0;
+  const detalhe = [];
+  faixasOrd.forEach((f, i) => {
+    const ultima = i === faixasOrd.length - 1;
+    const largura = f.ate - limiteAnterior;
+    // Última faixa é aberta: pega tudo que sobrar, sem limite de largura.
+    const valorNaFaixa = ultima ? Math.max(restante, 0) : Math.min(Math.max(restante, 0), largura);
+    const comissaoFaixa = valorNaFaixa * (f.pct/100);
+    detalhe.push({ de: limiteAnterior, ate: ultima ? null : f.ate, pct: f.pct, valorNaFaixa, comissaoFaixa });
+    totalComissao += comissaoFaixa;
+    restante -= valorNaFaixa;
+    limiteAnterior = f.ate;
+  });
+  return { detalhe, totalComissao, pctEfetivo: faturamento > 0 ? totalComissao/faturamento*100 : 0 };
+}
+
+function atualizarCalculoFaixas(){
+  const el = $('ccFaixasResultado');
+  const faturamento = Number($('ccFaturamento').value);
+  if(!faturamento || faturamento <= 0){ el.innerHTML = ''; return; }
+  const r = calcularComissaoFaixas(faturamento);
+  el.innerHTML = `
+    <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Faixa</th><th>%</th><th>Valor nesta faixa</th><th>Comissão da faixa</th></tr></thead><tbody>
+      ${r.detalhe.filter(d => d.valorNaFaixa > 0).map(d => `<tr>
+        <td>${fmtMoeda(d.de)} até ${d.ate == null ? 'acima' : fmtMoeda(d.ate)}</td>
+        <td>${fmtPct(d.pct)}</td>
+        <td>${fmtMoeda(d.valorNaFaixa)}</td>
+        <td>${fmtMoeda(d.comissaoFaixa)}</td>
+      </tr>`).join('')}
+    </tbody></table></div>
+    <div class="dash-grid" style="margin-top:12px">
+      <div class="dash-card"><div class="lbl">Comissão total</div><div class="val">${fmtMoeda(r.totalComissao)}</div></div>
+      <div class="dash-card"><div class="lbl">Percentual efetivo sobre o faturamento</div><div class="val">${fmtPct(r.pctEfetivo)}</div></div>
+    </div>`;
+}
+
 function renderConfigCadeiaComercial(){
   const el = $('ccConfigCard');
   if(cadeiaComercialCanal === 'externo'){
     const c = cadeiaComercialConfig.externo;
-    const lunaPct = 100 - c.margemPdv - c.comissaoExterno - c.overrideInterno;
+    const lunaPct = c.margemPdv < 100 ? (1 - c.margemPdv/100) / (1 + (c.comissaoExterno+c.overrideInterno)/100) * 100 : null;
     el.innerHTML = `
       <h3 style="margin-top:0">Representante Externo (revendedor)</h3>
-      <p class="hint">O representante externo vende pro PDV/revenda e ganha uma comissão. Um executivo interno da Luna supervisiona esse representante e recebe um override menor por cima, sem ter vendido diretamente.</p>
+      <p class="hint">O representante externo vende pro PDV/revenda e ganha uma comissão sobre o preço de fábrica. Um executivo interno da Luna supervisiona esse representante e recebe um override menor, também sobre o preço de fábrica, sem ter vendido diretamente.</p>
       <div class="row" style="align-items:flex-end;gap:16px;flex-wrap:wrap">
-        <div class="field"><label>Margem do PDV / revenda (%)</label><input type="number" step="0.1" class="inp" id="ccMargemPdv" value="${c.margemPdv}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
-        <div class="field"><label>Comissão do representante externo (%)</label><input type="number" step="0.1" class="inp" id="ccComissaoExterno" value="${c.comissaoExterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
-        <div class="field"><label>Override do executivo interno (%)</label><input type="number" step="0.1" class="inp" id="ccOverrideInterno" value="${c.overrideInterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
-        <div class="field"><label>Sobra pra Luna (%)</label><input type="text" class="inp" id="ccLunaPct" value="${fmtPct(lunaPct)}" disabled style="width:120px;font-weight:600"></div>
+        <div class="field"><label>Margem do PDV / revenda (% do preço ao consumidor)</label><input type="number" step="0.1" class="inp" id="ccMargemPdv" value="${c.margemPdv}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
+        <div class="field"><label>Comissão do representante externo (% do preço de fábrica)</label><input type="number" step="0.1" class="inp" id="ccComissaoExterno" value="${c.comissaoExterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
+        <div class="field"><label>Override do executivo interno (% do preço de fábrica)</label><input type="number" step="0.1" class="inp" id="ccOverrideInterno" value="${c.overrideInterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
+        <div class="field"><label>Sobra pra Luna (% do preço ao consumidor)</label><input type="text" class="inp" id="ccLunaPct" value="${lunaPct!=null?fmtPct(lunaPct):'—'}" disabled style="width:120px;font-weight:600"></div>
       </div>
       <div id="ccConfigMsg" class="msg"></div>`;
   } else {
     const c = cadeiaComercialConfig.interno;
-    const lunaPct = 100 - c.margemPdv - c.comissaoInterno;
+    const lunaPct = c.margemPdv < 100 ? (1 - c.margemPdv/100) / (1 + c.comissaoInterno/100) * 100 : null;
     el.innerHTML = `
       <h3 style="margin-top:0">Executivo Interno (venda direta)</h3>
-      <p class="hint">O próprio executivo da Luna vende direto pro PDV/revenda. Ele já tem um salário fixo, então a comissão por venda é menor que a do representante externo — e não existe override aqui (ninguém está sendo supervisionado).</p>
+      <p class="hint">O próprio executivo da Luna vende direto pro PDV/revenda. Ele já tem um salário fixo, então a comissão por venda (sobre o preço de fábrica) é menor que a do representante externo — e não existe override aqui (ninguém está sendo supervisionado).</p>
       <div class="row" style="align-items:flex-end;gap:16px;flex-wrap:wrap">
-        <div class="field"><label>Margem do PDV / revenda (%)</label><input type="number" step="0.1" class="inp" id="ccMargemPdvInterno" value="${c.margemPdv}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
-        <div class="field"><label>Comissão do executivo interno (%)</label><input type="number" step="0.1" class="inp" id="ccComissaoInterno" value="${c.comissaoInterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
-        <div class="field"><label>Sobra pra Luna (%)</label><input type="text" class="inp" id="ccLunaPctInterno" value="${fmtPct(lunaPct)}" disabled style="width:120px;font-weight:600"></div>
+        <div class="field"><label>Margem do PDV / revenda (% do preço ao consumidor)</label><input type="number" step="0.1" class="inp" id="ccMargemPdvInterno" value="${c.margemPdv}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
+        <div class="field"><label>Comissão do executivo interno (% do preço de fábrica)</label><input type="number" step="0.1" class="inp" id="ccComissaoInterno" value="${c.comissaoInterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
+        <div class="field"><label>Sobra pra Luna (% do preço ao consumidor)</label><input type="text" class="inp" id="ccLunaPctInterno" value="${lunaPct!=null?fmtPct(lunaPct):'—'}" disabled style="width:120px;font-weight:600"></div>
       </div>
       <div class="row" style="align-items:flex-end;gap:16px;flex-wrap:wrap;margin-top:4px">
         <div class="field"><label>Fixo mensal do executivo (R$)</label><input type="number" step="0.01" class="inp" id="ccFixoMensal" value="${c.fixoMensal}" style="width:160px" oninput="atualizarConfigCadeiaComercial()"></div>
@@ -2820,31 +2951,38 @@ function renderConfigCadeiaComercial(){
 }
 
 function calcularCadeiaComercial(precoFabrica){
+  // Comissão e override são calculados sobre o PREÇO DE FÁBRICA (não sobre o
+  // preço ao consumidor/PDV) — é assim que a comissão de fato é paga:
+  // representante e executivo recebem um % do que a Luna fatura, não do
+  // preço final de venda no PDV. A margem do PDV/revenda continua sendo um
+  // % do preço ao consumidor, que é como margem de revenda normalmente se
+  // define (margem sobre o preço de venda).
   if(cadeiaComercialCanal === 'externo'){
     const c = cadeiaComercialConfig.externo;
-    const lunaPct = 100 - c.margemPdv - c.comissaoExterno - c.overrideInterno;
-    if(lunaPct <= 0) return null;
-    const precoConsumidor = precoFabrica / (lunaPct/100);
+    if(c.margemPdv >= 100) return null;
+    const comissaoR = precoFabrica * (c.comissaoExterno/100);
+    const overrideR = precoFabrica * (c.overrideInterno/100);
+    const precoConsumidor = (precoFabrica + comissaoR + overrideR) / (1 - c.margemPdv/100);
     return {
       precoConsumidor,
       margemPdvR: precoConsumidor * (c.margemPdv/100),
-      comissaoR: precoConsumidor * (c.comissaoExterno/100),
-      overrideR: precoConsumidor * (c.overrideInterno/100),
+      comissaoR,
+      overrideR,
       lunaR: precoFabrica,
-      lunaPct,
+      lunaPct: precoFabrica / precoConsumidor * 100,
     };
   } else {
     const c = cadeiaComercialConfig.interno;
-    const lunaPct = 100 - c.margemPdv - c.comissaoInterno;
-    if(lunaPct <= 0) return null;
-    const precoConsumidor = precoFabrica / (lunaPct/100);
+    if(c.margemPdv >= 100) return null;
+    const comissaoR = precoFabrica * (c.comissaoInterno/100);
+    const precoConsumidor = (precoFabrica + comissaoR) / (1 - c.margemPdv/100);
     return {
       precoConsumidor,
       margemPdvR: precoConsumidor * (c.margemPdv/100),
-      comissaoR: precoConsumidor * (c.comissaoInterno/100),
+      comissaoR,
       overrideR: null,
       lunaR: precoFabrica,
-      lunaPct,
+      lunaPct: precoFabrica / precoConsumidor * 100,
     };
   }
 }
@@ -2855,17 +2993,17 @@ function atualizarConfigCadeiaComercial(){
     const margemPdv = Number($('ccMargemPdv').value) || 0;
     const comissaoExterno = Number($('ccComissaoExterno').value) || 0;
     const overrideInterno = Number($('ccOverrideInterno').value) || 0;
-    const lunaPct = 100 - margemPdv - comissaoExterno - overrideInterno;
+    if(margemPdv >= 100){ $('ccLunaPct').value = '—'; showMsg('ccConfigMsg','A margem do PDV não pode chegar a 100% ou mais do preço ao consumidor.','err'); return; }
+    const lunaPct = (1 - margemPdv/100) / (1 + (comissaoExterno+overrideInterno)/100) * 100;
     $('ccLunaPct').value = fmtPct(lunaPct);
-    if(lunaPct <= 0){ showMsg('ccConfigMsg','A soma dos percentuais não pode chegar a 100% ou mais — não sobraria nada pra Luna.','err'); return; }
     cadeiaComercialConfig.externo = { margemPdv, comissaoExterno, overrideInterno };
   } else {
     const margemPdv = Number($('ccMargemPdvInterno').value) || 0;
     const comissaoInterno = Number($('ccComissaoInterno').value) || 0;
     const fixoMensal = Number($('ccFixoMensal').value) || 0;
-    const lunaPct = 100 - margemPdv - comissaoInterno;
+    if(margemPdv >= 100){ $('ccLunaPctInterno').value = '—'; showMsg('ccConfigMsg','A margem do PDV não pode chegar a 100% ou mais do preço ao consumidor.','err'); return; }
+    const lunaPct = (1 - margemPdv/100) / (1 + comissaoInterno/100) * 100;
     $('ccLunaPctInterno').value = fmtPct(lunaPct);
-    if(lunaPct <= 0){ showMsg('ccConfigMsg','A soma dos percentuais não pode chegar a 100% ou mais — não sobraria nada pra Luna.','err'); return; }
     cadeiaComercialConfig.interno = { margemPdv, comissaoInterno, fixoMensal };
   }
   renderTabelaCadeiaComercial();
@@ -2880,8 +3018,8 @@ function renderTabelaCadeiaComercial(){
   const porCategoria = {};
   linhas.forEach(l => { (porCategoria[l.categoria] = porCategoria[l.categoria] || []).push(l); });
 
-  const colComissao = cadeiaComercialCanal === 'externo' ? 'Comissão externo' : 'Comissão executivo';
-  const colOverride = cadeiaComercialCanal === 'externo' ? '<th>Override interno</th>' : '';
+  const colComissao = cadeiaComercialCanal === 'externo' ? 'Comissão externo (s/ fábrica)' : 'Comissão executivo (s/ fábrica)';
+  const colOverride = cadeiaComercialCanal === 'externo' ? '<th>Override interno (s/ fábrica)</th>' : '';
 
   el.innerHTML = Object.keys(porCategoria).sort().map(cat => {
     const itens = porCategoria[cat].sort((a,b) => a.nome.localeCompare(b.nome));
@@ -2907,16 +3045,18 @@ function renderTabelaCadeiaComercial(){
 function atualizarLinhaCadeiaComercial(produtoId){
   const input = document.querySelector('tr[data-produto-id="'+produtoId+'"] .cc-preco-consumidor');
   const precoConsumidor = Number(input.value) || 0;
+  const linha = (window.__cadeiaComercialCache||[]).find(l => l.id === produtoId);
+  const precoFabrica = linha ? linha.precoFabrica : 0;
   let margemR, comissaoR, overrideR = null;
   if(cadeiaComercialCanal === 'externo'){
     const c = cadeiaComercialConfig.externo;
     margemR = precoConsumidor * (c.margemPdv/100);
-    comissaoR = precoConsumidor * (c.comissaoExterno/100);
-    overrideR = precoConsumidor * (c.overrideInterno/100);
+    comissaoR = precoFabrica * (c.comissaoExterno/100);
+    overrideR = precoFabrica * (c.overrideInterno/100);
   } else {
     const c = cadeiaComercialConfig.interno;
     margemR = precoConsumidor * (c.margemPdv/100);
-    comissaoR = precoConsumidor * (c.comissaoInterno/100);
+    comissaoR = precoFabrica * (c.comissaoInterno/100);
   }
   $('ccMargem_'+produtoId).textContent = fmtMoeda(margemR);
   $('ccComissao_'+produtoId).textContent = fmtMoeda(comissaoR);
@@ -2965,12 +3105,12 @@ function exportarCadeiaComercialCSV(){
     if(comOverride){
       const c = cadeiaComercialConfig.externo;
       margemR = precoConsumidor * (c.margemPdv/100);
-      comissaoR = precoConsumidor * (c.comissaoExterno/100);
-      overrideR = precoConsumidor * (c.overrideInterno/100);
+      comissaoR = l.precoFabrica * (c.comissaoExterno/100);
+      overrideR = l.precoFabrica * (c.overrideInterno/100);
     } else {
       const c = cadeiaComercialConfig.interno;
       margemR = precoConsumidor * (c.margemPdv/100);
-      comissaoR = precoConsumidor * (c.comissaoInterno/100);
+      comissaoR = l.precoFabrica * (c.comissaoInterno/100);
     }
     const campos = [txt(canalLabel), txt(l.categoria), txt(l.nome), num(l.precoFabrica), num(precoConsumidor), num(margemR), num(comissaoR)];
     if(comOverride) campos.push(num(overrideR));
