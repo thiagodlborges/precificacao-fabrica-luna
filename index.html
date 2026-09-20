@@ -146,6 +146,7 @@
   <div class="tab" id="tabConfigMargem" data-tab="configmargem" onclick="mudarTab('configmargem')">⚙ Alertas de Margem<span id="badgeAlertasMargem"></span></div>
   <div class="tab" id="tabVariacaoCustos" data-tab="variacaocustos" onclick="mudarTab('variacaocustos')">📈 Variação de Custos</div>
   <div class="tab" id="tabCadeiaComercial" data-tab="cadeiacomercial" onclick="mudarTab('cadeiacomercial')" style="display:none">🔗 Cadeia Comercial</div>
+  <div class="tab" id="tabTabelasAlt" data-tab="tabelasalt" onclick="mudarTab('tabelasalt')">🗂️ Tabelas Alternativas</div>
 </nav>
 
 <main id="mainContent"><div class="loading">Carregando…</div></main>
@@ -202,6 +203,37 @@
     <div class="msg" id="produtoMsg"></div>
     <div class="modal-actions"><button class="btn" onclick="salvarProduto()" id="btnSalvarProduto">Salvar</button></div>
     <button class="modal-close" onclick="fecharModal('modalProduto')">Cancelar</button>
+  </div>
+</div>
+
+<!-- MODAL: Nova/editar tabela alternativa de preço -->
+<div class="modal-overlay" id="modalTabelaAlt">
+  <div class="modal">
+    <h3 id="tituloTabelaAlt">Nova Tabela Alternativa</h3>
+    <input type="hidden" id="taId">
+    <div class="field" style="margin-bottom:14px">
+      <label>Nome da tabela</label>
+      <input class="inp" id="taNome" placeholder="Ex: Representante João — Região Sul">
+    </div>
+    <div class="field" style="margin-bottom:14px">
+      <label>Tipo</label>
+      <select class="inp" id="taTipo" onchange="onTaTipoChange()">
+        <option value="sem_representante">Sem Representante</option>
+        <option value="com_representante">Com Representante</option>
+      </select>
+    </div>
+    <div class="field" id="taPercentualWrap" style="margin-bottom:14px;display:none">
+      <label>Percentual de representação (%)</label>
+      <input class="inp" id="taPercentual" type="number" step="0.1" min="0" max="99.9" style="width:160px" placeholder="Ex: 5">
+      <p class="hint" style="margin-top:4px">Usado pra "recompor" o preço da Luna a partir do preço praticado nesta tabela.</p>
+    </div>
+    <div class="field" style="margin-bottom:14px">
+      <label>Status</label>
+      <select class="inp" id="taAtiva"><option value="true">Ativa</option><option value="false">Inativa</option></select>
+    </div>
+    <div class="msg" id="taMsg"></div>
+    <div class="modal-actions"><button class="btn" onclick="salvarTabelaAlt()">Salvar</button></div>
+    <button class="modal-close" onclick="fecharModal('modalTabelaAlt')">Cancelar</button>
   </div>
 </div>
 
@@ -318,17 +350,6 @@
       <label>Elo</label>
       <select class="inp" id="pcElo" onchange="atualizarTributosDoModalPreco()"></select>
     </div>
-    <div id="pcRepresentanteCalcWrap" style="display:none;margin-bottom:14px;background:var(--creme);border-radius:10px;padding:14px 16px">
-      <label style="margin-bottom:8px;display:block">Dimensionar preço pra comportar a comissão do representante</label>
-      <p class="hint" style="margin-bottom:10px">Pega o preço da tabela Sem Representação (o que já garante a margem da fábrica) e soma por cima o quanto o representante vai levar de comissão — assim o preço final cobre a comissão sem tirar nada da margem da Luna.</p>
-      <div class="row" style="align-items:flex-end;margin-bottom:0">
-        <div class="field"><label>Preço sem representação (vigente)</label><input class="inp" id="pcRepPrecoBase" type="text" disabled style="width:160px;font-weight:600"></div>
-        <div class="field"><label>Comissão do representante (%)</label><input class="inp" id="pcRepComissao" type="number" step="0.1" min="0" style="width:130px" oninput="atualizarCalculoRepresentante()"></div>
-        <div class="field"><label>Preço sugerido (com representação)</label><input class="inp" id="pcRepPrecoSugerido" type="text" disabled style="width:160px;font-weight:600;color:var(--bordo)"></div>
-        <button type="button" class="btn-outline btn btn-sm" onclick="usarPrecoSugeridoRepresentante()">Usar este valor</button>
-      </div>
-      <div id="pcRepresentanteMsg" class="msg" style="margin-top:8px"></div>
-    </div>
     <div class="grid-2col">
       <div>
         <div class="row" style="margin-bottom:4px">
@@ -408,9 +429,9 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const PORTAL_URL = 'https://thiagodlborges.github.io/Sistema-Luna/';
 const $ = id => document.getElementById(id);
 
-const ELOS_POR_ORIGEM = { fabrica: ['fabrica_loja', 'representante', 'sem_representante'], fabrica_insumo: ['fabrica_loja', 'representante', 'sem_representante'] };
+const ELOS_POR_ORIGEM = { fabrica: ['fabrica_loja'], fabrica_insumo: ['fabrica_loja'] };
 const MEUS_ELOS = [...new Set(Object.values(ELOS_POR_ORIGEM).flat())]; // elos que pertencem a este módulo (fábrica) — usado pra restringir tributos e aprovações
-const ELO_LABEL = { fabrica_loja: 'Fábrica → Loja', loja_consumidor: 'Loja → Consumidor', compra_revenda: 'Compra → Revenda', loja_delivery: 'Loja → Delivery', representante: 'Com Representante', sem_representante: 'Sem Representante' };
+const ELO_LABEL = { fabrica_loja: 'Fábrica → Loja', loja_consumidor: 'Loja → Consumidor', compra_revenda: 'Compra → Revenda', loja_delivery: 'Loja → Delivery' };
 const ORIGEM_LABEL = { fabrica: 'Fábrica', fabrica_insumo: 'Insumo (só peso)', revenda: 'Revenda (fornecedor externo)', consumo_loja: 'Feito na loja' };
 
 let meuPerfil = null;
@@ -694,6 +715,7 @@ function renderTab(){
   else if(currentTab==='configmargem') renderConfigMargem();
   else if(currentTab==='variacaocustos') renderVariacaoCustos();
   else if(currentTab==='cadeiacomercial') renderCadeiaComercial();
+  else if(currentTab==='tabelasalt') renderTabelasAlternativas();
 }
 
 // ── PRODUTOS ───────────────────────────────────────────────
@@ -1452,8 +1474,6 @@ let precosEloAtual = 'fabrica_loja';
 
 const PRECOS_ELO_TABS = [
   { elo: 'fabrica_loja', label: '📦 Fábrica → Loja' },
-  { elo: 'representante', label: '🤝 Com Representante' },
-  { elo: 'sem_representante', label: '🎯 Sem Representante' },
 ];
 
 function precoVigenteDe(todosPrecos, produtoId, elo){
@@ -1718,42 +1738,6 @@ async function popularTributosCheckboxDoElo(elo, selecionadosIds){
 
 function atualizarTributosDoModalPreco(){
   popularTributosCheckboxDoElo($('pcElo').value, []);
-  atualizarCalculoRepresentante();
-}
-
-function atualizarCalculoRepresentante(){
-  const wrap = $('pcRepresentanteCalcWrap');
-  const elo = $('pcElo').value;
-  if(elo !== 'representante' || !produtoSelecionadoPrecos){ wrap.style.display = 'none'; return; }
-  wrap.style.display = '';
-  const semRep = precoVigenteDe(window.__todosPrecosCache||[], produtoSelecionadoPrecos.id, 'sem_representante');
-  if(!semRep){
-    $('pcRepPrecoBase').value = '—';
-    $('pcRepPrecoSugerido').value = '—';
-    delete $('pcRepPrecoSugerido').dataset.valor;
-    showMsg('pcRepresentanteMsg','Esse produto ainda não tem preço aprovado na tabela Sem Representação — cadastre lá primeiro pra poder calcular a sugestão aqui.','err');
-    return;
-  }
-  showMsg('pcRepresentanteMsg','','');
-  const precoBase = Number(semRep.preco_venda);
-  $('pcRepPrecoBase').value = fmtMoeda(precoBase);
-  if(!$('pcRepComissao').value) $('pcRepComissao').value = cadeiaComercialConfig.externo.comissaoExterno;
-  const comissao = Number($('pcRepComissao').value) || 0;
-  if(comissao >= 100){ $('pcRepPrecoSugerido').value = '—'; delete $('pcRepPrecoSugerido').dataset.valor; return; }
-  // Preço com representação = preço sem representação "engordado" o suficiente
-  // pra que, depois de pagar a comissão, sobre pra Luna o mesmo valor de
-  // sempre — a margem da fábrica não muda de canal pra canal.
-  const precoSugerido = precoBase / (1 - comissao/100);
-  $('pcRepPrecoSugerido').value = fmtMoeda(precoSugerido);
-  $('pcRepPrecoSugerido').dataset.valor = precoSugerido.toFixed(2);
-}
-
-function usarPrecoSugeridoRepresentante(){
-  const valor = $('pcRepPrecoSugerido').dataset.valor;
-  if(!valor){ showMsg('pcRepresentanteMsg','Calcule um valor válido primeiro (veja o aviso acima).','err'); return; }
-  $('pcPrecoVenda').value = valor;
-  atualizarMargensModal();
-  showMsg('pcRepresentanteMsg','Preço de venda preenchido com a sugestão!','ok');
 }
 
 async function calcularCustoComposicao(produtoId){
@@ -1796,7 +1780,6 @@ async function abrirNovoValor(produtoId, elo, foco){
 
   showMsg('precoMsg', sugestao > 0 ? ('Sugestão pela composição (veja abaixo): '+fmtMoeda(sugestao)) : '', '');
   await carregarInsumosNoPreco(produtoId);
-  atualizarCalculoRepresentante();
   $('modalPreco').classList.add('show');
   setTimeout(() => { const campo = foco==='preco' ? $('pcPrecoVenda') : $('pcCusto'); campo.focus(); campo.select(); }, 50);
 }
@@ -1821,8 +1804,6 @@ function abrirNovoPreco(){
   popularTributosCheckboxDoElo($('pcElo').value, []);
   showMsg('precoMsg','','');
   carregarInsumosNoPreco(produtoSelecionadoPrecos.id);
-  $('pcRepComissao').value = '';
-  atualizarCalculoRepresentante();
   $('modalPreco').classList.add('show');
 }
 
@@ -1846,8 +1827,6 @@ async function abrirEditarPreco(id){
   await popularTributosCheckboxDoElo(row.elo, (tribRow||[]).map(t => t.tributo_id));
   showMsg('precoMsg','','');
   carregarInsumosNoPreco(produtoSelecionadoPrecos.id);
-  $('pcRepComissao').value = '';
-  atualizarCalculoRepresentante();
   $('modalPreco').classList.add('show');
 }
 
@@ -3183,6 +3162,271 @@ function exportarCadeiaComercialCSV(){
   a.click();
 }
 
+
+
+// ── TABELAS ALTERNATIVAS DE PREÇO ──────────────────────────
+// A tabela oficial (aba Preços → Fábrica → Loja) continua sendo a matriz:
+// única fonte de custo e de margem de referência. Estas tabelas são cópias
+// editáveis dela — pra quando a Luna precisa de um preço diferente num
+// canal específico, com ou sem representante comercial. Podem existir
+// quantas forem necessárias.
+let tabelasAltCache = [];
+let tabelaAltAtualId = null;
+
+async function renderTabelasAlternativas(){
+  const el = $('mainContent');
+  el.innerHTML = '<div class="card"><div class="loading">Carregando…</div></div>';
+
+  const { data, error } = await sb.from('precificacao_tabelas_alternativas').select('*').order('criado_em', { ascending: false });
+  if(error){ el.innerHTML = '<div class="card"><div class="empty">Erro: '+esc(error.message)+'</div></div>'; return; }
+  tabelasAltCache = data || [];
+
+  el.innerHTML = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Tabelas de Preço Alternativas</h2>
+        <button class="btn" onclick="abrirModalNovaTabelaAlt()">+ Nova Tabela</button>
+      </div>
+      <p class="hint">A tabela oficial (Preços → Fábrica → Loja) é a matriz — é dela que vem o custo e a margem de referência. Cada tabela alternativa aqui nasce como uma cópia do preço oficial produto a produto, com o preço livre pra editar.</p>
+    </div>
+    <div id="tabelasAltLista"></div>`;
+
+  renderListaTabelasAlt();
+}
+
+function renderListaTabelasAlt(){
+  const el = $('tabelasAltLista');
+  if(!tabelasAltCache.length){ el.innerHTML = '<div class="card"><div class="empty">Nenhuma tabela alternativa criada ainda.</div></div>'; return; }
+
+  el.innerHTML = tabelasAltCache.map(t => `
+    <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-weight:600;font-size:1.02rem;color:var(--bordo-dark)">${esc(t.nome)} ${t.ativa ? '' : '<span class="badge badge-inativo">Inativa</span>'}</div>
+        <div class="hint" style="margin:2px 0 0">${t.tipo === 'com_representante' ? '🤝 Com representante — '+fmtPct(t.percentual_representacao)+' de representação' : '🎯 Sem representante'}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn-outline btn btn-sm" onclick="abrirTabelaAlt('${t.id}')">Abrir</button>
+        <button class="btn-outline btn btn-sm" onclick="abrirModalEditarTabelaAlt('${t.id}')">✏️ Editar</button>
+        <button class="btn-danger" onclick="excluirTabelaAlt('${t.id}','${esc(t.nome).replace(/'/g,"\\'")}')">🗑</button>
+      </div>
+    </div>`).join('');
+}
+
+function abrirModalNovaTabelaAlt(){
+  $('tituloTabelaAlt').textContent = 'Nova Tabela Alternativa';
+  $('taId').value = '';
+  $('taNome').value = '';
+  $('taTipo').value = 'sem_representante';
+  $('taPercentual').value = '';
+  $('taAtiva').value = 'true';
+  onTaTipoChange();
+  showMsg('taMsg','','');
+  $('modalTabelaAlt').classList.add('show');
+}
+
+function abrirModalEditarTabelaAlt(id){
+  const t = tabelasAltCache.find(x => x.id === id);
+  if(!t) return;
+  $('tituloTabelaAlt').textContent = 'Editar Tabela';
+  $('taId').value = t.id;
+  $('taNome').value = t.nome;
+  $('taTipo').value = t.tipo;
+  $('taPercentual').value = t.percentual_representacao != null ? t.percentual_representacao : '';
+  $('taAtiva').value = String(t.ativa);
+  onTaTipoChange();
+  showMsg('taMsg','','');
+  $('modalTabelaAlt').classList.add('show');
+}
+
+function onTaTipoChange(){
+  $('taPercentualWrap').style.display = $('taTipo').value === 'com_representante' ? '' : 'none';
+}
+
+async function salvarTabelaAlt(){
+  const id = $('taId').value;
+  const nome = $('taNome').value.trim();
+  const tipo = $('taTipo').value;
+  const percentual = tipo === 'com_representante' ? Number($('taPercentual').value) : null;
+  const ativa = $('taAtiva').value === 'true';
+  if(!nome){ showMsg('taMsg','Dê um nome pra tabela.','err'); return; }
+  if(tipo === 'com_representante' && (isNaN(percentual) || percentual < 0 || percentual >= 100)){ showMsg('taMsg','Informe um percentual de representação válido (entre 0 e 100).','err'); return; }
+
+  if(id){
+    const { error } = await sb.from('precificacao_tabelas_alternativas').update({ nome, tipo, percentual_representacao: percentual, ativa, atualizado_em: new Date().toISOString() }).eq('id', id);
+    if(error){ showMsg('taMsg','Erro: '+error.message,'err'); return; }
+  } else {
+    const { data, error } = await sb.from('precificacao_tabelas_alternativas').insert({ nome, tipo, percentual_representacao: percentual, ativa, criado_por: meuPerfil.id, criado_por_nome: meuPerfil.nome }).select('id').single();
+    if(error){ showMsg('taMsg','Erro: '+error.message,'err'); return; }
+    await garantirItensTabelaAlt(data.id); // já nasce populada com os preços oficiais de hoje
+  }
+  fecharModal('modalTabelaAlt');
+  renderTabelasAlternativas();
+}
+
+async function excluirTabelaAlt(id, nome){
+  if(!confirm('Excluir a tabela "'+nome+'"? Isso apaga todos os preços dela — não afeta a tabela oficial.')) return;
+  const { error } = await sb.from('precificacao_tabelas_alternativas').delete().eq('id', id);
+  if(error){ alert('Erro: '+error.message); return; }
+  renderTabelasAlternativas();
+}
+
+// Garante que todo produto ativo da fábrica com preço oficial tem uma linha
+// nesta tabela — cobre tanto a criação da tabela quanto produtos novos
+// cadastrados depois que a tabela já existia.
+async function garantirItensTabelaAlt(tabelaId){
+  const [{ data: produtos }, { data: existentes }] = await Promise.all([
+    sb.from('precificacao_produtos').select('id').eq('ativo', true).in('origem', ['fabrica','fabrica_insumo']),
+    sb.from('precificacao_tabela_alternativa_itens').select('produto_id').eq('tabela_id', tabelaId),
+  ]);
+  const existentesSet = new Set((existentes||[]).map(e => e.produto_id));
+  const faltantes = (produtos||[]).filter(p => !existentesSet.has(p.id));
+  if(!faltantes.length) return;
+  const { data: precosOficiais } = await sb.from('precificacao_precos').select('produto_id, preco_venda, vigencia_inicio')
+    .eq('elo','fabrica_loja').eq('status','aprovado').in('produto_id', faltantes.map(p => p.id));
+  const oficialPorProduto = {};
+  (precosOficiais||[]).forEach(p => { const atual = oficialPorProduto[p.produto_id]; if(!atual || p.vigencia_inicio > atual.vigencia_inicio) oficialPorProduto[p.produto_id] = p; });
+  const novos = faltantes.filter(p => oficialPorProduto[p.id]).map(p => ({ tabela_id: tabelaId, produto_id: p.id, preco_venda: Number(oficialPorProduto[p.id].preco_venda) }));
+  if(novos.length) await sb.from('precificacao_tabela_alternativa_itens').insert(novos);
+}
+
+function calcularPrecoLunaRecomposto(precoTabela, percentual){
+  // "Recompõe" quanto sobra pra fábrica depois de tirar a representação do
+  // preço que está sendo praticado nesta tabela — pra conferir se ainda dá
+  // pra cobrir o custo mesmo depois da comissão sair.
+  return precoTabela * (1 - (percentual||0)/100);
+}
+
+async function abrirTabelaAlt(tabelaId){
+  tabelaAltAtualId = tabelaId;
+  const tabela = tabelasAltCache.find(t => t.id === tabelaId);
+  if(!tabela) return;
+  const el = $('mainContent');
+  el.innerHTML = '<div class="card"><div class="loading">Carregando…</div></div>';
+
+  await garantirItensTabelaAlt(tabelaId);
+
+  const [{ data: produtos }, { data: precosOficiais }, { data: itensAlt }] = await Promise.all([
+    sb.from('precificacao_produtos').select('id, nome, categoria').eq('ativo', true).in('origem', ['fabrica','fabrica_insumo']).order('categoria').order('nome'),
+    sb.from('precificacao_precos').select('produto_id, preco_venda, custo, vigencia_inicio').eq('elo','fabrica_loja').eq('status','aprovado'),
+    sb.from('precificacao_tabela_alternativa_itens').select('*').eq('tabela_id', tabelaId),
+  ]);
+
+  const oficialPorProduto = {};
+  (precosOficiais||[]).forEach(p => { const atual = oficialPorProduto[p.produto_id]; if(!atual || p.vigencia_inicio > atual.vigencia_inicio) oficialPorProduto[p.produto_id] = p; });
+  const itemPorProduto = {};
+  (itensAlt||[]).forEach(i => { itemPorProduto[i.produto_id] = i; });
+
+  const linhas = (produtos||[])
+    .filter(p => oficialPorProduto[p.id])
+    .map(p => ({
+      id: p.id, nome: p.nome, categoria: p.categoria,
+      precoOficial: Number(oficialPorProduto[p.id].preco_venda),
+      custoOficial: Number(oficialPorProduto[p.id].custo),
+      precoTabela: itemPorProduto[p.id] ? Number(itemPorProduto[p.id].preco_venda) : Number(oficialPorProduto[p.id].preco_venda),
+    }));
+
+  window.__tabelaAltCache = linhas;
+  const comRep = tabela.tipo === 'com_representante';
+
+  const porCategoria = {};
+  linhas.forEach(l => { (porCategoria[l.categoria] = porCategoria[l.categoria] || []).push(l); });
+  const categorias = Object.keys(porCategoria).sort();
+
+  el.innerHTML = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>
+          <h2 style="margin:0">${esc(tabela.nome)}</h2>
+          <p class="hint" style="margin:4px 0 0">${comRep ? '🤝 Com representante — '+fmtPct(tabela.percentual_representacao)+' de representação' : '🎯 Sem representante'}</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-outline btn btn-sm" onclick="renderTabelasAlternativas()">← Voltar pra lista</button>
+          <button class="btn-outline btn btn-sm" onclick="exportarTabelaAltCSV()">⬇ Exportar CSV</button>
+        </div>
+      </div>
+      <p class="hint">Preço Oficial é o praticado hoje na Fábrica → Loja (matriz). Preço nesta Tabela começa igual e pode ser editado livremente.${comRep ? ' "Preço da Luna (recomposto)" mostra quanto sobra pra fábrica depois de tirar a representação — compare com o custo pra não vender no vermelho.' : ''}</p>
+    </div>
+    ${categorias.map(cat => `
+      <div class="card">
+        <h3 style="margin-top:0;color:var(--bordo-dark);font-family:'Cormorant Garamond',serif">${esc(cat)}</h3>
+        <div class="table-wrap"><table><thead><tr>
+          <th>Produto</th><th>Preço Oficial (matriz)</th><th>Preço nesta Tabela</th>
+          ${comRep ? '<th>Preço da Luna (recomposto)</th>' : ''}
+          <th></th>
+        </tr></thead><tbody>
+          ${porCategoria[cat].sort((a,b) => a.nome.localeCompare(b.nome)).map(l => {
+            const alterado = Math.abs(l.precoTabela - l.precoOficial) > 0.005;
+            const lunaVal = comRep ? calcularPrecoLunaRecomposto(l.precoTabela, tabela.percentual_representacao) : null;
+            const abaixoDoCusto = comRep && lunaVal < l.custoOficial;
+            return `<tr data-produto-id="${l.id}">
+              <td>${esc(l.nome)}</td>
+              <td>${fmtMoeda(l.precoOficial)}</td>
+              <td><input type="number" step="0.01" class="inp ta-preco-input" style="width:120px${alterado?';border-color:var(--marrom)':''}" value="${l.precoTabela.toFixed(2)}" data-oficial="${l.precoOficial}" data-custo="${l.custoOficial}" oninput="atualizarLinhaTabelaAlt('${l.id}')" onblur="salvarItemTabelaAlt('${l.id}')"></td>
+              ${comRep ? `<td id="taLuna_${l.id}">${fmtMoeda(lunaVal)}${abaixoDoCusto ? ' <span style="color:#B43C3C;font-size:.7rem;font-weight:600">⚠️ abaixo do custo</span>' : ''}</td>` : ''}
+              <td>${alterado ? '<button class="btn-outline btn btn-sm" onclick="resetarLinhaTabelaAlt(\''+l.id+'\')" title="Voltar pro preço oficial">↺</button>' : ''}</td>
+            </tr>`;
+          }).join('')}
+        </tbody></table></div>
+      </div>`).join('')}`;
+}
+
+function atualizarLinhaTabelaAlt(produtoId){
+  const input = document.querySelector('tr[data-produto-id="'+produtoId+'"] .ta-preco-input');
+  const precoTabela = Number(input.value) || 0;
+  const oficial = Number(input.dataset.oficial);
+  const custo = Number(input.dataset.custo);
+  input.style.borderColor = Math.abs(precoTabela - oficial) > 0.005 ? 'var(--marrom)' : '';
+
+  const tabela = tabelasAltCache.find(t => t.id === tabelaAltAtualId);
+  if(tabela && tabela.tipo === 'com_representante'){
+    const lunaEl = $('taLuna_'+produtoId);
+    if(lunaEl){
+      const lunaVal = calcularPrecoLunaRecomposto(precoTabela, tabela.percentual_representacao);
+      lunaEl.innerHTML = fmtMoeda(lunaVal) + (lunaVal < custo ? ' <span style="color:#B43C3C;font-size:.7rem;font-weight:600">⚠️ abaixo do custo</span>' : '');
+    }
+  }
+}
+
+async function salvarItemTabelaAlt(produtoId){
+  const input = document.querySelector('tr[data-produto-id="'+produtoId+'"] .ta-preco-input');
+  const preco = Number(input.value);
+  if(isNaN(preco) || preco < 0) return;
+  await sb.from('precificacao_tabela_alternativa_itens')
+    .upsert({ tabela_id: tabelaAltAtualId, produto_id: produtoId, preco_venda: preco, atualizado_em: new Date().toISOString() }, { onConflict: 'tabela_id,produto_id' });
+  const linha = (window.__tabelaAltCache||[]).find(l => l.id === produtoId);
+  if(linha) linha.precoTabela = preco;
+}
+
+function resetarLinhaTabelaAlt(produtoId){
+  const input = document.querySelector('tr[data-produto-id="'+produtoId+'"] .ta-preco-input');
+  input.value = Number(input.dataset.oficial).toFixed(2);
+  atualizarLinhaTabelaAlt(produtoId);
+  salvarItemTabelaAlt(produtoId);
+  const btn = input.closest('tr').querySelector('button.btn-outline.btn-sm');
+  if(btn) btn.style.display = 'none';
+}
+
+function exportarTabelaAltCSV(){
+  const linhas = window.__tabelaAltCache || [];
+  if(!linhas.length) return;
+  const tabela = tabelasAltCache.find(t => t.id === tabelaAltAtualId);
+  const comRep = tabela && tabela.tipo === 'com_representante';
+  const txt = v => '"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+  const num = v => v.toFixed(2).replace('.',',');
+  const header = 'Categoria;Produto;Preco Oficial;Preco nesta Tabela'+(comRep?';Preco da Luna (recomposto)':'')+'\n';
+  const corpo = linhas.map(l => {
+    const input = document.querySelector('tr[data-produto-id="'+l.id+'"] .ta-preco-input');
+    const precoTabela = input ? (Number(input.value)||0) : l.precoTabela;
+    const campos = [txt(l.categoria), txt(l.nome), num(l.precoOficial), num(precoTabela)];
+    if(comRep) campos.push(num(calcularPrecoLunaRecomposto(precoTabela, tabela.percentual_representacao)));
+    return campos.join(';');
+  }).join('\n');
+  const blob = new Blob(['\uFEFF'+header+corpo], { type:'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'tabela-alternativa-'+(tabela?tabela.nome.replace(/[^a-z0-9]+/gi,'-'):'export')+'-'+hojeISO()+'.csv';
+  a.click();
+}
 
 verificarAcessoEIniciar();
 </script>
