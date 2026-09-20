@@ -28,11 +28,12 @@
   .hbtn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);color:var(--creme);padding:8px 14px;border-radius:6px;cursor:pointer;font-size:.78rem;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:background .15s}
   .hbtn:hover{background:rgba(255,255,255,.22)}
 
-  nav.tabs{display:flex;gap:2px;background:var(--white);border-bottom:1px solid var(--creme-dark);padding:0 26px;overflow-x:auto}
-  .tab{padding:14px 18px;font-size:.82rem;font-weight:500;color:var(--text-light);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
-  .tab.active{color:var(--bordo);border-bottom-color:var(--bordo);font-weight:600}
+  .app-body{display:flex;align-items:flex-start}
+  nav.tabs{display:flex;flex-direction:column;gap:2px;background:var(--white);border-right:1px solid var(--creme-dark);width:236px;flex:0 0 236px;padding:14px 0;overflow-y:auto;height:calc(100vh - 62px);position:sticky;top:0}
+  .tab{padding:12px 22px;font-size:.82rem;font-weight:500;color:var(--text-light);cursor:pointer;border-left:3px solid transparent;white-space:normal;line-height:1.35}
+  .tab.active{color:var(--bordo);border-left-color:var(--bordo);font-weight:600;background:var(--creme)}
 
-  main{max-width:1140px;margin:0 auto;padding:28px 26px 60px}
+  main{max-width:1140px;margin:0;flex:1;padding:28px 26px 60px;min-width:0}
   .card{background:var(--white);border:1px solid var(--creme-dark);border-radius:12px;padding:22px;margin-bottom:18px}
   .card h2{font-family:'Cormorant Garamond',serif;font-size:1.3rem;color:var(--bordo-dark);margin-bottom:14px}
   .card p.hint{font-size:.82rem;color:var(--text-light);margin-bottom:14px}
@@ -105,9 +106,14 @@
   .msg.err{color:#B43C3C}
   .msg.ok{color:#27AE60}
 
+  @media (max-width:860px){
+    .app-body{flex-direction:column}
+    nav.tabs{flex-direction:row;width:100%;flex:0 0 auto;height:auto;position:static;border-right:none;border-bottom:1px solid var(--creme-dark);overflow-x:auto;padding:0 16px}
+    .tab{border-left:none;border-bottom:2px solid transparent;white-space:nowrap}
+    .tab.active{border-left-color:transparent;border-bottom-color:var(--bordo);background:transparent}
+  }
   @media (max-width:600px){
     header{padding:12px 16px}
-    nav.tabs{padding:0 16px}
     main{padding:20px 16px 50px}
     .card{padding:16px}
   }
@@ -128,6 +134,7 @@
   <button class="hbtn" onclick="sairApp()">Sair</button>
 </header>
 
+<div class="app-body">
 <nav class="tabs">
   <div class="tab active" id="tabProdutos" data-tab="produtos" onclick="mudarTab('produtos')">📦 Produtos</div>
   <div class="tab" id="tabTributos" data-tab="tributos" onclick="mudarTab('tributos')">🧾 Tributos</div>
@@ -142,6 +149,7 @@
 </nav>
 
 <main id="mainContent"><div class="loading">Carregando…</div></main>
+</div>
 </div>
 
 <!-- MODAL: Novo/editar produto -->
@@ -309,6 +317,17 @@
     <div class="field" style="margin-bottom:14px;max-width:340px">
       <label>Elo</label>
       <select class="inp" id="pcElo" onchange="atualizarTributosDoModalPreco()"></select>
+    </div>
+    <div id="pcRepresentanteCalcWrap" style="display:none;margin-bottom:14px;background:var(--creme);border-radius:10px;padding:14px 16px">
+      <label style="margin-bottom:8px;display:block">Dimensionar preço pra comportar a comissão do representante</label>
+      <p class="hint" style="margin-bottom:10px">Pega o preço da tabela Sem Representação (o que já garante a margem da fábrica) e soma por cima o quanto o representante vai levar de comissão — assim o preço final cobre a comissão sem tirar nada da margem da Luna.</p>
+      <div class="row" style="align-items:flex-end;margin-bottom:0">
+        <div class="field"><label>Preço sem representação (vigente)</label><input class="inp" id="pcRepPrecoBase" type="text" disabled style="width:160px;font-weight:600"></div>
+        <div class="field"><label>Comissão do representante (%)</label><input class="inp" id="pcRepComissao" type="number" step="0.1" min="0" style="width:130px" oninput="atualizarCalculoRepresentante()"></div>
+        <div class="field"><label>Preço sugerido (com representação)</label><input class="inp" id="pcRepPrecoSugerido" type="text" disabled style="width:160px;font-weight:600;color:var(--bordo)"></div>
+        <button type="button" class="btn-outline btn btn-sm" onclick="usarPrecoSugeridoRepresentante()">Usar este valor</button>
+      </div>
+      <div id="pcRepresentanteMsg" class="msg" style="margin-top:8px"></div>
     </div>
     <div class="grid-2col">
       <div>
@@ -1699,6 +1718,42 @@ async function popularTributosCheckboxDoElo(elo, selecionadosIds){
 
 function atualizarTributosDoModalPreco(){
   popularTributosCheckboxDoElo($('pcElo').value, []);
+  atualizarCalculoRepresentante();
+}
+
+function atualizarCalculoRepresentante(){
+  const wrap = $('pcRepresentanteCalcWrap');
+  const elo = $('pcElo').value;
+  if(elo !== 'representante' || !produtoSelecionadoPrecos){ wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  const semRep = precoVigenteDe(window.__todosPrecosCache||[], produtoSelecionadoPrecos.id, 'sem_representante');
+  if(!semRep){
+    $('pcRepPrecoBase').value = '—';
+    $('pcRepPrecoSugerido').value = '—';
+    delete $('pcRepPrecoSugerido').dataset.valor;
+    showMsg('pcRepresentanteMsg','Esse produto ainda não tem preço aprovado na tabela Sem Representação — cadastre lá primeiro pra poder calcular a sugestão aqui.','err');
+    return;
+  }
+  showMsg('pcRepresentanteMsg','','');
+  const precoBase = Number(semRep.preco_venda);
+  $('pcRepPrecoBase').value = fmtMoeda(precoBase);
+  if(!$('pcRepComissao').value) $('pcRepComissao').value = cadeiaComercialConfig.externo.comissaoExterno;
+  const comissao = Number($('pcRepComissao').value) || 0;
+  if(comissao >= 100){ $('pcRepPrecoSugerido').value = '—'; delete $('pcRepPrecoSugerido').dataset.valor; return; }
+  // Preço com representação = preço sem representação "engordado" o suficiente
+  // pra que, depois de pagar a comissão, sobre pra Luna o mesmo valor de
+  // sempre — a margem da fábrica não muda de canal pra canal.
+  const precoSugerido = precoBase / (1 - comissao/100);
+  $('pcRepPrecoSugerido').value = fmtMoeda(precoSugerido);
+  $('pcRepPrecoSugerido').dataset.valor = precoSugerido.toFixed(2);
+}
+
+function usarPrecoSugeridoRepresentante(){
+  const valor = $('pcRepPrecoSugerido').dataset.valor;
+  if(!valor){ showMsg('pcRepresentanteMsg','Calcule um valor válido primeiro (veja o aviso acima).','err'); return; }
+  $('pcPrecoVenda').value = valor;
+  atualizarMargensModal();
+  showMsg('pcRepresentanteMsg','Preço de venda preenchido com a sugestão!','ok');
 }
 
 async function calcularCustoComposicao(produtoId){
@@ -1741,6 +1796,7 @@ async function abrirNovoValor(produtoId, elo, foco){
 
   showMsg('precoMsg', sugestao > 0 ? ('Sugestão pela composição (veja abaixo): '+fmtMoeda(sugestao)) : '', '');
   await carregarInsumosNoPreco(produtoId);
+  atualizarCalculoRepresentante();
   $('modalPreco').classList.add('show');
   setTimeout(() => { const campo = foco==='preco' ? $('pcPrecoVenda') : $('pcCusto'); campo.focus(); campo.select(); }, 50);
 }
@@ -1765,6 +1821,8 @@ function abrirNovoPreco(){
   popularTributosCheckboxDoElo($('pcElo').value, []);
   showMsg('precoMsg','','');
   carregarInsumosNoPreco(produtoSelecionadoPrecos.id);
+  $('pcRepComissao').value = '';
+  atualizarCalculoRepresentante();
   $('modalPreco').classList.add('show');
 }
 
@@ -1788,6 +1846,8 @@ async function abrirEditarPreco(id){
   await popularTributosCheckboxDoElo(row.elo, (tribRow||[]).map(t => t.tributo_id));
   showMsg('precoMsg','','');
   carregarInsumosNoPreco(produtoSelecionadoPrecos.id);
+  $('pcRepComissao').value = '';
+  atualizarCalculoRepresentante();
   $('modalPreco').classList.add('show');
 }
 
