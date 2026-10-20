@@ -225,7 +225,7 @@
     <div class="field" id="taPercentualWrap" style="margin-bottom:14px;display:none">
       <label>Percentual de representação (%)</label>
       <input class="inp" id="taPercentual" type="number" step="0.1" min="0" max="99.9" style="width:160px" placeholder="Ex: 5">
-      <p class="hint" style="margin-top:4px">Usado pra "recompor" o preço da Luna a partir do preço praticado nesta tabela.</p>
+      <p class="hint" style="margin-top:4px">Comissão sobre o preço de fábrica. O preço da tabela é calculado como: preço de fábrica + comissão ÷ (1 − imposto), pra a Luna manter a mesma margem que teria vendendo direto.</p>
     </div>
     <div class="field" style="margin-bottom:14px">
       <label>Status</label>
@@ -3273,6 +3273,14 @@ async function excluirTabelaAlt(id, nome){
 // Garante que todo produto ativo da fábrica com preço oficial tem uma linha
 // nesta tabela — cobre tanto a criação da tabela quanto produtos novos
 // cadastrados depois que a tabela já existia.
+async function carregarTributosPorPreco(precoIds){
+  const mapa = {};
+  if(!precoIds.length) return mapa;
+  const { data } = await sb.from('precificacao_preco_tributos').select('preco_id, precificacao_tributos(tipo_tributo, aliquota, aliquota_credito)').in('preco_id', precoIds);
+  (data||[]).forEach(t => { if(t.precificacao_tributos) (mapa[t.preco_id] = mapa[t.preco_id] || []).push(t.precificacao_tributos); });
+  return mapa;
+}
+
 async function garantirItensTabelaAlt(tabelaId){
   const [{ data: tabela }, { data: produtos }, { data: existentes }] = await Promise.all([
     sb.from('precificacao_tabelas_alternativas').select('tipo, percentual_representacao').eq('id', tabelaId).single(),
@@ -3282,30 +3290,49 @@ async function garantirItensTabelaAlt(tabelaId){
   const existentesSet = new Set((existentes||[]).map(e => e.produto_id));
   const faltantes = (produtos||[]).filter(p => !existentesSet.has(p.id));
   if(!faltantes.length) return;
-  const { data: precosOficiais } = await sb.from('precificacao_precos').select('produto_id, preco_venda, vigencia_inicio')
+  const { data: precosOficiais } = await sb.from('precificacao_precos').select('id, produto_id, preco_venda, vigencia_inicio')
     .eq('elo','fabrica_loja').eq('status','aprovado').in('produto_id', faltantes.map(p => p.id));
   const oficialPorProduto = {};
   (precosOficiais||[]).forEach(p => { const atual = oficialPorProduto[p.produto_id]; if(!atual || p.vigencia_inicio > atual.vigencia_inicio) oficialPorProduto[p.produto_id] = p; });
+  const tribsPorPreco = await carregarTributosPorPreco(Object.values(oficialPorProduto).map(p => p.id));
 
-  // Preço inicial: pra tabela "Com Representante", já nasce "engordado" o
-  // suficiente pra que o Preço da Luna (Recomposto) bata exatamente com o
-  // preço oficial — por padrão, a margem da fábrica não pode nascer
+  // Preço inicial: pra tabela "Com Representante", já nasce com a comissão
+  // (+ imposto sobre ela) embutida, de modo que o Preço da Luna (Recomposto)
+  // bata exatamente com o preço oficial — a margem da fábrica não nasce
   // corroída, só se alguém editar o preço manualmente depois.
   const pct = tabela?.percentual_representacao;
   const comRep = tabela?.tipo === 'com_representante' && pct != null && pct < 100;
   const novos = faltantes.filter(p => oficialPorProduto[p.id]).map(p => {
     const precoOficial = Number(oficialPorProduto[p.id].preco_venda);
-    const precoInicial = comRep ? precoOficial / (1 - pct/100) : precoOficial;
+    const aliq = aliquotaEfetivaDebito(tribsPorPreco[oficialPorProduto[p.id].id]);
+    const precoInicial = comRep ? calcularPrecoTabelaRepresentante(precoOficial, pct, aliq) : precoOficial;
     return { tabela_id: tabelaId, produto_id: p.id, preco_venda: precoInicial };
   });
   if(novos.length) await sb.from('precificacao_tabela_alternativa_itens').insert(novos);
 }
 
-function calcularPrecoLunaRecomposto(precoTabela, percentual){
-  // "Recompõe" quanto sobra pra fábrica depois de tirar a representação do
-  // preço que está sendo praticado nesta tabela — pra conferir se ainda dá
-  // pra cobrir o custo mesmo depois da comissão sair.
-  return precoTabela * (1 - (percentual||0)/100);
+// Alíquota efetiva de débito (fração, ex: 0.12) sobre o preço sem IPI — é o
+// quanto de imposto "mora dentro" de cada R$ faturado, já considerando a cascata.
+function aliquotaEfetivaDebito(tributos){
+  const m = calcularMargens(0, 100, tributos);
+  return m.valorSemIPI > 0 ? m.debito / m.valorSemIPI : 0;
+}
+
+// Comissão do representante é % do PREÇO DE FÁBRICA (oficial) e a fábrica
+// quer o mesmo líquido que teria vendendo direto. Como a comissão também é
+// faturada, sofre imposto: preço da tabela = oficial + comissão / (1 − imposto).
+// Ex: oficial R$5, comissão 18%, imposto 12% → 5 + 0,90/0,88 = R$6,02.
+function calcularPrecoTabelaRepresentante(precoOficial, percentual, aliqImposto){
+  const t = Math.min(Math.max(aliqImposto||0, 0), 0.99);
+  return precoOficial + precoOficial * (percentual||0)/100 / (1 - t);
+}
+
+function calcularPrecoLunaRecomposto(precoTabela, percentual, precoOficial, aliqImposto){
+  // Inverso do cálculo acima: tira do preço da tabela a comissão e o imposto
+  // sobre ela e devolve o preço "equivalente de fábrica" — compare com o
+  // oficial/custo pra ver se a margem foi preservada.
+  const t = Math.min(Math.max(aliqImposto||0, 0), 0.99);
+  return precoTabela - precoOficial * (percentual||0)/100 / (1 - t);
 }
 
 async function abrirTabelaAlt(tabelaId){
@@ -3319,7 +3346,7 @@ async function abrirTabelaAlt(tabelaId){
 
   const [{ data: produtos }, { data: precosOficiais }, { data: itensAlt }] = await Promise.all([
     sb.from('precificacao_produtos').select('id, nome, categoria').eq('ativo', true).in('origem', ['fabrica','fabrica_insumo']).order('categoria').order('nome'),
-    sb.from('precificacao_precos').select('produto_id, preco_venda, custo, vigencia_inicio').eq('elo','fabrica_loja').eq('status','aprovado'),
+    sb.from('precificacao_precos').select('id, produto_id, preco_venda, custo, vigencia_inicio').eq('elo','fabrica_loja').eq('status','aprovado'),
     sb.from('precificacao_tabela_alternativa_itens').select('*').eq('tabela_id', tabelaId),
   ]);
 
@@ -3327,6 +3354,7 @@ async function abrirTabelaAlt(tabelaId){
   (precosOficiais||[]).forEach(p => { const atual = oficialPorProduto[p.produto_id]; if(!atual || p.vigencia_inicio > atual.vigencia_inicio) oficialPorProduto[p.produto_id] = p; });
   const itemPorProduto = {};
   (itensAlt||[]).forEach(i => { itemPorProduto[i.produto_id] = i; });
+  const tribsPorPreco = await carregarTributosPorPreco(Object.values(oficialPorProduto).map(p => p.id));
 
   const comRepPct = tabela.tipo === 'com_representante' && tabela.percentual_representacao != null && tabela.percentual_representacao < 100 ? tabela.percentual_representacao : null;
   const linhas = (produtos||[])
@@ -3336,9 +3364,10 @@ async function abrirTabelaAlt(tabelaId){
       // Fallback defensivo (o item já deveria existir, graças ao
       // garantirItensTabelaAlt logo acima) — mesma regra de "engordar" pra
       // Com Representante, senão o Preço da Luna nasceria abaixo do oficial.
-      const precoPadrao = comRepPct != null ? precoOficial / (1 - comRepPct/100) : precoOficial;
+      const aliqImposto = aliquotaEfetivaDebito(tribsPorPreco[oficialPorProduto[p.id].id]);
+      const precoPadrao = comRepPct != null ? calcularPrecoTabelaRepresentante(precoOficial, comRepPct, aliqImposto) : precoOficial;
       return {
-        id: p.id, nome: p.nome, categoria: p.categoria,
+        id: p.id, nome: p.nome, categoria: p.categoria, aliqImposto,
         precoOficial, custoOficial: Number(oficialPorProduto[p.id].custo),
         precoTabela: itemPorProduto[p.id] ? Number(itemPorProduto[p.id].preco_venda) : precoPadrao,
       };
@@ -3363,7 +3392,7 @@ async function abrirTabelaAlt(tabelaId){
           <button class="btn-outline btn btn-sm" onclick="exportarTabelaAltCSV()">⬇ Exportar CSV</button>
         </div>
       </div>
-      <p class="hint">Preço Oficial é o praticado hoje na Fábrica → Loja (matriz). Preço nesta Tabela começa igual e pode ser editado livremente.${comRep ? ' "Preço da Luna (recomposto)" mostra quanto sobra pra fábrica depois de tirar a representação — compare com o custo pra não vender no vermelho.' : ''}</p>
+      <p class="hint">Preço Oficial é o praticado hoje na Fábrica → Loja (matriz). Preço nesta Tabela começa igual e pode ser editado livremente.${comRep ? ' O preço da tabela já nasce com a comissão do representante (sobre o preço de fábrica) mais o imposto incidente sobre ela. "Preço da Luna (recomposto)" mostra o equivalente de fábrica depois de tirar comissão e imposto — compare com o oficial e o custo pra não vender no vermelho.' : ''}</p>
     </div>
     ${categorias.map(cat => `
       <div class="card">
@@ -3375,12 +3404,12 @@ async function abrirTabelaAlt(tabelaId){
         </tr></thead><tbody>
           ${porCategoria[cat].sort((a,b) => a.nome.localeCompare(b.nome)).map(l => {
             const alterado = Math.abs(l.precoTabela - l.precoOficial) > 0.005;
-            const lunaVal = comRep ? calcularPrecoLunaRecomposto(l.precoTabela, tabela.percentual_representacao) : null;
+            const lunaVal = comRep ? calcularPrecoLunaRecomposto(l.precoTabela, tabela.percentual_representacao, l.precoOficial, l.aliqImposto) : null;
             const abaixoDoCusto = comRep && lunaVal < l.custoOficial;
             return `<tr data-produto-id="${l.id}">
               <td>${esc(l.nome)}</td>
               <td>${fmtMoeda(l.precoOficial)}</td>
-              <td><input type="number" step="0.01" class="inp ta-preco-input" style="width:120px${alterado?';border-color:var(--marrom)':''}" value="${l.precoTabela.toFixed(2)}" data-oficial="${l.precoOficial}" data-custo="${l.custoOficial}" oninput="atualizarLinhaTabelaAlt('${l.id}')" onblur="salvarItemTabelaAlt('${l.id}')"></td>
+              <td><input type="number" step="0.01" class="inp ta-preco-input" style="width:120px${alterado?';border-color:var(--marrom)':''}" value="${l.precoTabela.toFixed(2)}" data-oficial="${l.precoOficial}" data-custo="${l.custoOficial}" data-aliq="${l.aliqImposto}" oninput="atualizarLinhaTabelaAlt('${l.id}')" onblur="salvarItemTabelaAlt('${l.id}')"></td>
               ${comRep ? `<td id="taLuna_${l.id}">${fmtMoeda(lunaVal)}${abaixoDoCusto ? ' <span style="color:#B43C3C;font-size:.7rem;font-weight:600">⚠️ abaixo do custo</span>' : ''}</td>` : ''}
               <td>${alterado ? '<button class="btn-outline btn btn-sm" onclick="resetarLinhaTabelaAlt(\''+l.id+'\')" title="Voltar pro preço oficial">↺</button>' : ''}</td>
             </tr>`;
@@ -3400,7 +3429,7 @@ function atualizarLinhaTabelaAlt(produtoId){
   if(tabela && tabela.tipo === 'com_representante'){
     const lunaEl = $('taLuna_'+produtoId);
     if(lunaEl){
-      const lunaVal = calcularPrecoLunaRecomposto(precoTabela, tabela.percentual_representacao);
+      const lunaVal = calcularPrecoLunaRecomposto(precoTabela, tabela.percentual_representacao, oficial, Number(input.dataset.aliq)||0);
       lunaEl.innerHTML = fmtMoeda(lunaVal) + (lunaVal < custo ? ' <span style="color:#B43C3C;font-size:.7rem;font-weight:600">⚠️ abaixo do custo</span>' : '');
     }
   }
@@ -3437,7 +3466,7 @@ function exportarTabelaAltCSV(){
     const input = document.querySelector('tr[data-produto-id="'+l.id+'"] .ta-preco-input');
     const precoTabela = input ? (Number(input.value)||0) : l.precoTabela;
     const campos = [txt(l.categoria), txt(l.nome), num(l.precoOficial), num(precoTabela)];
-    if(comRep) campos.push(num(calcularPrecoLunaRecomposto(precoTabela, tabela.percentual_representacao)));
+    if(comRep) campos.push(num(calcularPrecoLunaRecomposto(precoTabela, tabela.percentual_representacao, l.precoOficial, l.aliqImposto)));
     return campos.join(';');
   }).join('\n');
   const blob = new Blob(['\uFEFF'+header+corpo], { type:'text/csv;charset=utf-8;' });
