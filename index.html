@@ -2805,7 +2805,7 @@ async function renderCadeiaComercial(){
 
   const [{ data: produtos, error: errP }, { data: precos, error: errPr }] = await Promise.all([
     sb.from('precificacao_produtos').select('id, nome, categoria').eq('ativo', true).in('origem', ['fabrica','fabrica_insumo']).order('categoria').order('nome'),
-    sb.from('precificacao_precos').select('produto_id, preco_venda, vigencia_inicio').eq('elo','fabrica_loja').eq('status','aprovado'),
+    sb.from('precificacao_precos').select('id, produto_id, preco_venda, vigencia_inicio').eq('elo','fabrica_loja').eq('status','aprovado'),
   ]);
 
   if(errP || errPr){ el.innerHTML = '<div class="card"><div class="empty">Erro ao carregar: '+esc((errP||errPr).message)+'</div></div>'; return; }
@@ -2816,8 +2816,10 @@ async function renderCadeiaComercial(){
     if(!atual || p.vigencia_inicio > atual.vigencia_inicio) precoPorProduto[p.produto_id] = p;
   });
 
+  const tribsPorPreco = await carregarTributosPorPreco(Object.values(precoPorProduto).map(p => p.id));
   const linhas = (produtos||[])
-    .map(p => ({ id: p.id, nome: p.nome, categoria: p.categoria, precoFabrica: precoPorProduto[p.id] ? Number(precoPorProduto[p.id].preco_venda) : null }))
+    .map(p => ({ id: p.id, nome: p.nome, categoria: p.categoria, precoFabrica: precoPorProduto[p.id] ? Number(precoPorProduto[p.id].preco_venda) : null,
+      aliqImposto: precoPorProduto[p.id] ? aliquotaEfetivaDebito(tribsPorPreco[precoPorProduto[p.id].id]) : 0 }))
     .filter(l => l.precoFabrica != null);
 
   window.__cadeiaComercialCache = linhas;
@@ -2825,7 +2827,7 @@ async function renderCadeiaComercial(){
   el.innerHTML = `
     <div class="card">
       <h2>Cadeia Comercial — Simulador de Remuneração</h2>
-      <p class="hint">Dois canais de venda possíveis pra cada produto de fábrica, cada um com sua própria estrutura de remuneração. Parte do preço de fábrica (o que a Luna já cobra hoje) e calcula o preço final ao consumidor no PDV.</p>
+      <p class="hint">Dois canais de venda possíveis pra cada produto de fábrica, cada um com sua própria estrutura de remuneração. Parte do preço de fábrica (o que a Luna já cobra hoje) e calcula o preço final ao consumidor no PDV. A comissão e o override também são faturados, então levam o imposto do produto: o valor cobrado a mais é comissão ÷ (1 − imposto), pra Luna manter o mesmo líquido.</p>
       <div class="subnav" style="margin-bottom:0">
         <div class="subnav-item${cadeiaComercialCanal==='externo'?' active':''}" onclick="mudarCanalCadeiaComercial('externo')">🔁 Representante Externo (revendedor)</div>
         <div class="subnav-item${cadeiaComercialCanal==='interno'?' active':''}" onclick="mudarCanalCadeiaComercial('interno')">🏢 Executivo Interno (venda direta)</div>
@@ -2842,6 +2844,7 @@ async function renderCadeiaComercial(){
       <p class="hint">Testa um preço de fábrica hipotético, sem precisar de um produto cadastrado.</p>
       <div class="row" style="align-items:flex-end">
         <div class="field"><label>Preço de fábrica (R$)</label><input type="number" step="0.01" class="inp" id="ccPrecoAvulso" placeholder="Ex: 10,00" style="width:160px" oninput="atualizarSimulacaoAvulsa()"></div>
+        <div class="field"><label>Imposto do preço de fábrica (%)</label><input type="number" step="0.01" class="inp" id="ccAliqAvulso" value="0" style="width:120px" oninput="atualizarSimulacaoAvulsa()"></div>
       </div>
       <div id="ccAvulsoResultado"></div>
     </div>
@@ -2989,21 +2992,26 @@ function renderConfigCadeiaComercial(){
   }
 }
 
-function calcularCadeiaComercial(precoFabrica){
+function calcularCadeiaComercial(precoFabrica, aliqImposto){
   // Comissão e override são calculados sobre o PREÇO DE FÁBRICA (não sobre o
   // preço ao consumidor/PDV) — é assim que a comissão de fato é paga:
   // representante e executivo recebem um % do que a Luna fatura, não do
   // preço final de venda no PDV. A margem do PDV/revenda continua sendo um
   // % do preço ao consumidor, que é como margem de revenda normalmente se
   // define (margem sobre o preço de venda).
+  // A comissão (e o override) entram no preço faturado pela Luna, então também
+  // sofrem imposto: o valor cobrado a mais é comissão ÷ (1 − imposto), pra a
+  // Luna ficar com o mesmo líquido do preço de fábrica.
+  const t = Math.min(Math.max(aliqImposto||0, 0), 0.99);
   if(cadeiaComercialCanal === 'externo'){
     const c = cadeiaComercialConfig.externo;
     if(c.margemPdv >= 100) return null;
     const comissaoR = precoFabrica * (c.comissaoExterno/100);
     const overrideR = precoFabrica * (c.overrideInterno/100);
-    const precoConsumidor = (precoFabrica + comissaoR + overrideR) / (1 - c.margemPdv/100);
+    const impostoR = (comissaoR + overrideR) * t / (1 - t);
+    const precoConsumidor = (precoFabrica + comissaoR + overrideR + impostoR) / (1 - c.margemPdv/100);
     return {
-      precoConsumidor,
+      precoConsumidor, impostoR,
       margemPdvR: precoConsumidor * (c.margemPdv/100),
       comissaoR,
       overrideR,
@@ -3014,9 +3022,10 @@ function calcularCadeiaComercial(precoFabrica){
     const c = cadeiaComercialConfig.interno;
     if(c.margemPdv >= 100) return null;
     const comissaoR = precoFabrica * (c.comissaoInterno/100);
-    const precoConsumidor = (precoFabrica + comissaoR) / (1 - c.margemPdv/100);
+    const impostoR = comissaoR * t / (1 - t);
+    const precoConsumidor = (precoFabrica + comissaoR + impostoR) / (1 - c.margemPdv/100);
     return {
-      precoConsumidor,
+      precoConsumidor, impostoR,
       margemPdvR: precoConsumidor * (c.margemPdv/100),
       comissaoR,
       overrideR: null,
@@ -3063,9 +3072,9 @@ function renderTabelaCadeiaComercial(){
   el.innerHTML = Object.keys(porCategoria).sort().map(cat => {
     const itens = porCategoria[cat].sort((a,b) => a.nome.localeCompare(b.nome));
     return '<h3 style="font-family:\'Cormorant Garamond\',serif;font-size:1.05rem;color:var(--bordo-dark);margin:16px 0 8px">'+esc(cat)+'</h3>'+
-    '<div style="overflow-x:auto"><table><thead><tr><th>Produto</th><th>Preço fábrica (Luna)</th><th>Preço ao consumidor (PDV)</th><th>Margem PDV</th><th>'+colComissao+'</th>'+colOverride+'<th></th></tr></thead><tbody>'+
+    '<div style="overflow-x:auto"><table><thead><tr><th>Produto</th><th>Preço fábrica (Luna)</th><th>Preço ao consumidor (PDV)</th><th>Margem PDV</th><th>'+colComissao+'</th>'+colOverride+'<th>Imposto s/ comissão</th><th></th></tr></thead><tbody>'+
       itens.map(l => {
-        const r = calcularCadeiaComercial(l.precoFabrica);
+        const r = calcularCadeiaComercial(l.precoFabrica, l.aliqImposto);
         if(!r) return '';
         return '<tr data-produto-id="'+l.id+'">'+
           '<td>'+esc(l.nome)+'</td>'+
@@ -3074,6 +3083,7 @@ function renderTabelaCadeiaComercial(){
           '<td id="ccMargem_'+l.id+'">'+fmtMoeda(r.margemPdvR)+'</td>'+
           '<td id="ccComissao_'+l.id+'">'+fmtMoeda(r.comissaoR)+'</td>'+
           (cadeiaComercialCanal === 'externo' ? '<td id="ccOverride_'+l.id+'">'+fmtMoeda(r.overrideR)+'</td>' : '')+
+          '<td id="ccImposto_'+l.id+'">'+fmtMoeda(r.impostoR)+'</td>'+
           '<td><button type="button" class="btn-outline btn btn-sm" onclick="resetarLinhaCadeiaComercial(\''+l.id+'\')" title="Voltar ao valor calculado a partir do preço de fábrica">↺</button></td>'+
         '</tr>';
       }).join('')+
@@ -3115,7 +3125,7 @@ function atualizarSimulacaoAvulsa(){
   const el = $('ccAvulsoResultado');
   const preco = Number($('ccPrecoAvulso').value);
   if(!preco || preco <= 0){ el.innerHTML = ''; return; }
-  const r = calcularCadeiaComercial(preco);
+  const r = calcularCadeiaComercial(preco, (Number($('ccAliqAvulso').value)||0)/100);
   if(!r){ el.innerHTML = ''; return; }
   const overrideCard = r.overrideR != null ? `<div class="dash-card"><div class="lbl">Override executivo interno</div><div class="val">${fmtMoeda(r.overrideR)}</div></div>` : '';
   const fixoCard = cadeiaComercialCanal === 'interno' ? `<div class="dash-card"><div class="lbl">Fixo mensal do executivo (referência)</div><div class="val">${fmtMoeda(cadeiaComercialConfig.interno.fixoMensal)}</div></div>` : '';
@@ -3124,6 +3134,7 @@ function atualizarSimulacaoAvulsa(){
     <div class="dash-card"><div class="lbl">Margem do PDV/revenda</div><div class="val">${fmtMoeda(r.margemPdvR)}</div></div>
     <div class="dash-card"><div class="lbl">Comissão ${cadeiaComercialCanal==='externo'?'representante externo':'executivo interno'}</div><div class="val">${fmtMoeda(r.comissaoR)}</div></div>
     ${overrideCard}
+    <div class="dash-card"><div class="lbl">Imposto sobre a comissão</div><div class="val">${fmtMoeda(r.impostoR)}</div></div>
     <div class="dash-card"><div class="lbl">Fica com a Luna (preço de fábrica)</div><div class="val">${fmtMoeda(r.lunaR)}</div></div>
     ${fixoCard}
   </div>`;
@@ -3135,11 +3146,11 @@ function exportarCadeiaComercialCSV(){
   const txt = v => '"'+String(v==null?'':v).replace(/"/g,'""')+'"';
   const num = v => v.toFixed(2).replace('.',',');
   const comOverride = cadeiaComercialCanal === 'externo';
-  const header = 'Canal;Categoria;Produto;Preco Fabrica (Luna);Preco Consumidor (PDV);Margem PDV;'+(comOverride?'Comissao Externo;Override Interno':'Comissao Executivo')+'\n';
+  const header = 'Canal;Categoria;Produto;Preco Fabrica (Luna);Preco Consumidor (PDV);Margem PDV;'+(comOverride?'Comissao Externo;Override Interno':'Comissao Executivo')+';Imposto s/ Comissao\n';
   const canalLabel = comOverride ? 'Representante Externo' : 'Executivo Interno';
   const corpo = linhas.map(l => {
     const input = document.querySelector('tr[data-produto-id="'+l.id+'"] .cc-preco-consumidor');
-    const precoConsumidor = input ? Number(input.value)||0 : calcularCadeiaComercial(l.precoFabrica).precoConsumidor;
+    const precoConsumidor = input ? Number(input.value)||0 : calcularCadeiaComercial(l.precoFabrica, l.aliqImposto).precoConsumidor;
     let margemR, comissaoR, overrideR;
     if(comOverride){
       const c = cadeiaComercialConfig.externo;
@@ -3153,6 +3164,7 @@ function exportarCadeiaComercialCSV(){
     }
     const campos = [txt(canalLabel), txt(l.categoria), txt(l.nome), num(l.precoFabrica), num(precoConsumidor), num(margemR), num(comissaoR)];
     if(comOverride) campos.push(num(overrideR));
+    campos.push(num(calcularCadeiaComercial(l.precoFabrica, l.aliqImposto).impostoR));
     return campos.join(';');
   }).join('\n');
   const blob = new Blob(['\uFEFF'+header+corpo], { type:'text/csv;charset=utf-8;' });
