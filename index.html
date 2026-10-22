@@ -2758,8 +2758,8 @@ function exportarVariacaoCustosCSV(){
 //    O fixo mensal é um custo separado, não incide por unidade vendida.
 let cadeiaComercialCanal = 'externo';
 let cadeiaComercialConfig = {
-  externo: { margemPdv: 35, comissaoExterno: 5, overrideInterno: 1.5, repasse: 100 },
-  interno: { margemPdv: 35, comissaoInterno: 3, fixoMensal: 3000, repasse: 100 },
+  externo: { margemPdv: 35, comissaoExterno: 5, overrideInterno: 1.5, repasse: 100, logistico: 0 },
+  interno: { margemPdv: 35, comissaoInterno: 3, fixoMensal: 3000, repasse: 100, logistico: 0 },
 };
 
 // ── Comissão por Faixas de Faturamento (progressiva, tipo tabela do IR) ──
@@ -2974,6 +2974,7 @@ function renderConfigCadeiaComercial(){
         <div class="field"><label>Comissão do representante externo (% do preço de fábrica)</label><input type="number" step="0.1" class="inp" id="ccComissaoExterno" value="${c.comissaoExterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
         <div class="field"><label>Override do executivo interno (% do preço de fábrica)</label><input type="number" step="0.1" class="inp" id="ccOverrideInterno" value="${c.overrideInterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
         <div class="field"><label>% da representação repassada ao preço</label><input type="number" step="1" min="0" max="100" class="inp" id="ccRepasse" value="${c.repasse}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
+        <div class="field"><label>Custo logístico (% sobre o custo do produto)</label><input type="number" step="0.1" min="0" class="inp" id="ccLogistico" value="${c.logistico||0}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
         <div class="field"><label>Sobra pra Luna (% do preço ao consumidor)</label><input type="text" class="inp" id="ccLunaPct" value="${lunaPct!=null?fmtPct(lunaPct):'—'}" disabled style="width:120px;font-weight:600"></div>
       </div>
       <p class="hint" style="margin:4px 0 0">100% = toda a representação (comissão + override + imposto sobre eles) entra no preço. Abaixo de 100%, a parte não repassada é absorvida pela Luna e reduz a margem líquida — veja a coluna "Margem líquida Luna".</p>
@@ -2988,6 +2989,7 @@ function renderConfigCadeiaComercial(){
         <div class="field"><label>Margem do PDV / revenda (% do preço ao consumidor)</label><input type="number" step="0.1" class="inp" id="ccMargemPdvInterno" value="${c.margemPdv}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
         <div class="field"><label>Comissão do executivo interno (% do preço de fábrica)</label><input type="number" step="0.1" class="inp" id="ccComissaoInterno" value="${c.comissaoInterno}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
         <div class="field"><label>% da comissão repassada ao preço</label><input type="number" step="1" min="0" max="100" class="inp" id="ccRepasseInterno" value="${c.repasse}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
+        <div class="field"><label>Custo logístico (% sobre o custo do produto)</label><input type="number" step="0.1" min="0" class="inp" id="ccLogisticoInterno" value="${c.logistico||0}" style="width:120px" oninput="atualizarConfigCadeiaComercial()"></div>
         <div class="field"><label>Sobra pra Luna (% do preço ao consumidor)</label><input type="text" class="inp" id="ccLunaPctInterno" value="${lunaPct!=null?fmtPct(lunaPct):'—'}" disabled style="width:120px;font-weight:600"></div>
       </div>
       <div class="row" style="align-items:flex-end;gap:16px;flex-wrap:wrap;margin-top:4px">
@@ -3008,12 +3010,16 @@ function repasseFracao(c){
 // e menos a comissão/override pagos. `ctx` = { custo, tributos } do produto.
 // Retorna também a margem líquida sem representante (preço de fábrica puro)
 // como referência. Sem custo, não calcula.
-function margemLiquidaCadeia(precoFabrica, precoComRepresentacao, comissoesR, ctx){
+// O custo logístico (% sobre o custo, definido na simulação) é somado ao custo
+// do produto, como a matéria-prima; o crédito de imposto continua calculado só
+// sobre o custo original (logística não gera crédito).
+function margemLiquidaCadeia(precoFabrica, precoComRepresentacao, comissoesR, ctx, logisticoPct){
   if(!ctx || ctx.custo == null || isNaN(ctx.custo)) return { margemLiquidaR: null };
   const tribs = ctx.tributos || [];
-  const com = calcularMargens(ctx.custo, precoComRepresentacao, tribs);
-  const sem = calcularMargens(ctx.custo, precoFabrica, tribs);
-  const margemLiquidaR = com.receitaLiquida - ctx.custo - comissoesR;
+  const custoEf = ctx.custo * (1 + (logisticoPct||0)/100);
+  const com = calcularMargens(custoEf, precoComRepresentacao, tribs, ctx.custo);
+  const sem = calcularMargens(custoEf, precoFabrica, tribs, ctx.custo);
+  const margemLiquidaR = com.receitaLiquida - custoEf - comissoesR;
   return {
     margemLiquidaR,
     margemLiquidaPct: com.receitaLiquida > 0 ? margemLiquidaR / com.receitaLiquida * 100 : 0,
@@ -3043,7 +3049,7 @@ function calcularCadeiaComercial(precoFabrica, aliqImposto, ctx){
     const precoComRepresentacao = precoFabrica + k * (comissaoR + overrideR + impostoR);
     const precoConsumidor = precoComRepresentacao / (1 - c.margemPdv/100);
     return {
-      precoConsumidor, impostoR, precoComRepresentacao, ...margemLiquidaCadeia(precoFabrica, precoComRepresentacao, comissaoR + overrideR, ctx),
+      precoConsumidor, impostoR, precoComRepresentacao, ...margemLiquidaCadeia(precoFabrica, precoComRepresentacao, comissaoR + overrideR, ctx, c.logistico),
       margemPdvR: precoConsumidor * (c.margemPdv/100),
       comissaoR,
       overrideR,
@@ -3059,7 +3065,7 @@ function calcularCadeiaComercial(precoFabrica, aliqImposto, ctx){
     const precoComRepresentacao = precoFabrica + k * (comissaoR + impostoR);
     const precoConsumidor = precoComRepresentacao / (1 - c.margemPdv/100);
     return {
-      precoConsumidor, impostoR, precoComRepresentacao, ...margemLiquidaCadeia(precoFabrica, precoComRepresentacao, comissaoR, ctx),
+      precoConsumidor, impostoR, precoComRepresentacao, ...margemLiquidaCadeia(precoFabrica, precoComRepresentacao, comissaoR, ctx, c.logistico),
       margemPdvR: precoConsumidor * (c.margemPdv/100),
       comissaoR,
       overrideR: null,
@@ -3079,7 +3085,7 @@ function atualizarConfigCadeiaComercial(){
     const lunaPct = (1 - margemPdv/100) / (1 + (comissaoExterno+overrideInterno)/100) * 100;
     $('ccLunaPct').value = fmtPct(lunaPct);
     const repasse = Math.min(Math.max(Number($('ccRepasse').value), 0), 100);
-    cadeiaComercialConfig.externo = { margemPdv, comissaoExterno, overrideInterno, repasse: isNaN(repasse) ? 100 : repasse };
+    cadeiaComercialConfig.externo = { margemPdv, comissaoExterno, overrideInterno, repasse: isNaN(repasse) ? 100 : repasse, logistico: Math.max(Number($('ccLogistico').value)||0, 0) };
   } else {
     const margemPdv = Number($('ccMargemPdvInterno').value) || 0;
     const comissaoInterno = Number($('ccComissaoInterno').value) || 0;
@@ -3088,7 +3094,7 @@ function atualizarConfigCadeiaComercial(){
     const lunaPct = (1 - margemPdv/100) / (1 + comissaoInterno/100) * 100;
     $('ccLunaPctInterno').value = fmtPct(lunaPct);
     const repasse = Math.min(Math.max(Number($('ccRepasseInterno').value), 0), 100);
-    cadeiaComercialConfig.interno = { margemPdv, comissaoInterno, fixoMensal, repasse: isNaN(repasse) ? 100 : repasse };
+    cadeiaComercialConfig.interno = { margemPdv, comissaoInterno, fixoMensal, repasse: isNaN(repasse) ? 100 : repasse, logistico: Math.max(Number($('ccLogisticoInterno').value)||0, 0) };
   }
   renderTabelaCadeiaComercial();
   atualizarSimulacaoAvulsa();
