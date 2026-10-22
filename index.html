@@ -3121,7 +3121,7 @@ function renderTabelaCadeiaComercial(){
           '<td id="ccComissao_'+l.id+'">'+fmtMoeda(r.comissaoR)+'</td>'+
           (cadeiaComercialCanal === 'externo' ? '<td id="ccOverride_'+l.id+'">'+fmtMoeda(r.overrideR)+'</td>' : '')+
           '<td id="ccImposto_'+l.id+'">'+fmtMoeda(r.impostoR)+'</td>'+
-          '<td>'+(r.margemLiquidaR != null ? fmtMoeda(r.margemLiquidaR)+' <span class="hint" style="margin:0">('+fmtPct(r.margemLiquidaPct)+')</span><div class="hint" style="margin:0">s/ representante: '+fmtPct(r.margemSemRepPct)+'</div>' : '—')+'</td>'+
+          '<td style="white-space:nowrap">'+(r.margemLiquidaR != null ? '<div>'+fmtMoeda(r.margemLiquidaR)+' · '+fmtPct(r.margemLiquidaPct)+'</div><div class="hint" style="margin:0;white-space:nowrap">sem rep.: '+fmtPct(r.margemSemRepPct)+'</div>' : '—')+'</td>'+
           '<td><button type="button" class="btn-outline btn btn-sm" onclick="resetarLinhaCadeiaComercial(\''+l.id+'\')" title="Voltar ao valor calculado a partir do preço de fábrica">↺</button></td>'+
         '</tr>';
       }).join('')+
