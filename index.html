@@ -27,6 +27,8 @@
   header .spacer{flex:1}
   .hbtn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);color:var(--creme);padding:8px 14px;border-radius:6px;cursor:pointer;font-size:.78rem;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:background .15s}
   .hbtn:hover{background:rgba(255,255,255,.22)}
+  .hbtn.op-ativo{background:var(--creme);color:var(--bordo-dark);font-weight:700}
+  .op-oculta{display:none!important}
 
   .app-body{display:flex;align-items:flex-start}
   nav.tabs{display:flex;flex-direction:column;gap:2px;background:var(--white);border-right:1px solid var(--creme-dark);width:236px;flex:0 0 236px;padding:14px 0;overflow-y:auto;height:calc(100vh - 62px);position:sticky;top:0}
@@ -130,6 +132,10 @@
     <div class="brand-sub">Custo, preço e tributos</div>
   </div>
   <div class="spacer"></div>
+  <div id="opSwitch" style="display:flex;gap:6px;margin-right:12px">
+    <button class="hbtn" id="btnOpLoja" onclick="mudarOperacao('loja')">🏪 Operação Lojas</button>
+    <button class="hbtn" id="btnOpDist" onclick="mudarOperacao('distribuicao')">🚚 Operação Distribuição</button>
+  </div>
   <a href="https://thiagodlborges.github.io/Sistema-Luna/" class="hbtn">← Sistema Luna</a>
   <button class="hbtn" onclick="sairApp()">Sair</button>
 </header>
@@ -147,10 +153,48 @@
   <div class="tab" id="tabVariacaoCustos" data-tab="variacaocustos" onclick="mudarTab('variacaocustos')">📈 Variação de Custos</div>
   <div class="tab" id="tabCadeiaComercial" data-tab="cadeiacomercial" onclick="mudarTab('cadeiacomercial')" style="display:none">🔗 Cadeia Comercial</div>
   <div class="tab" id="tabTabelasAlt" data-tab="tabelasalt" onclick="mudarTab('tabelasalt')">🗂️ Tabelas Alternativas</div>
+  <div class="tab op-oculta" id="tabDistGuia" data-tab="distguia" onclick="mudarTab('distguia')">💲 Guia de Preços — Distribuição</div>
 </nav>
 
 <main id="mainContent"><div class="loading">Carregando…</div></main>
 </div>
+</div>
+
+<!-- MODAIS: Operação Distribuição -->
+<div class="modal-overlay" id="modalDistProduto">
+  <div class="modal">
+    <h3 id="dpTitulo">Novo Produto (Distribuição)</h3>
+    <input type="hidden" id="dpId">
+    <div class="field" style="margin-bottom:10px"><label>Nome</label><input class="inp" id="dpNome" placeholder="Ex: Picolé Yeez Manga"></div>
+    <div class="row">
+      <div class="field" style="flex:1"><label>Categoria</label><select class="inp" id="dpCategoria"><option value="Picolé">Picolé</option><option value="Pote">Pote</option></select></div>
+      <div class="field" style="flex:1"><label>Marca</label><input class="inp" id="dpMarca" value="Yeez"></div>
+    </div>
+    <div class="row">
+      <div class="field" style="flex:1"><label>Preço padrão — PDV (R$)</label><input class="inp" type="number" min="0" step="0.01" id="dpPreco" value="0"></div>
+      <div class="field" style="flex:1"><label>Un. por caixa</label><input class="inp" type="number" min="1" step="1" id="dpUpc" placeholder="Ex: 20"></div>
+    </div>
+    <div class="field" style="max-width:200px;margin-bottom:10px"><label>Código (opcional)</label><input class="inp" id="dpCodigo"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="distSalvarProduto()">Salvar</button>
+      <button class="btn-outline btn" onclick="fecharModal('modalDistProduto')">Cancelar</button>
+    </div>
+    <div class="msg" id="dpMsg"></div>
+  </div>
+</div>
+<div class="modal-overlay" id="modalDistTabela">
+  <div class="modal" style="max-width:560px">
+    <h3 id="dtTitulo">Nova Tabela de Preço</h3>
+    <input type="hidden" id="dtId">
+    <div class="field" style="margin-bottom:12px"><label>Nome da tabela</label><input class="inp" id="dtNome" placeholder="Ex: Tabela Hirota"></div>
+    <p class="hint" style="margin-bottom:8px">Deixe em branco os produtos que devem usar o preço padrão. Só preencha onde esse cliente paga diferente.</p>
+    <div id="dtItensLista" style="max-height:340px;overflow-y:auto"></div>
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn" onclick="distSalvarTabela()">Salvar</button>
+      <button class="btn-outline btn" onclick="fecharModal('modalDistTabela')">Cancelar</button>
+    </div>
+    <div class="msg" id="dtMsg"></div>
+  </div>
 </div>
 
 <!-- MODAL: Novo/editar produto -->
@@ -426,6 +470,25 @@
 const SUPABASE_URL = 'https://pbuhwpcpdcnaheaywmdv.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBidWh3cGNwZGNuYWhlYXl3bWR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNjU5MzksImV4cCI6MjA5MTg0MTkzOX0.Mg4PVg96ZiV3C2Rn0GLQU9c7ui_41OlU6Ldqn5jcvyY';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Operação atual: 'loja' (preços Fábrica → Loja) ou 'distribuicao' (picolés e potes Luna/Yeez, tabelas PDV/Distribuidor).
+let operacaoAtual = 'loja';
+try { if (localStorage.getItem('precif_operacao') === 'distribuicao') operacaoAtual = 'distribuicao'; } catch(e) {}
+// Na operação Lojas os picolés e potes da Yeez não aparecem: toda consulta de produtos da Precificação é filtrada aqui.
+(function(){
+  const fromOrig = sb.from.bind(sb);
+  sb.from = function(tabela){
+    const q = fromOrig(tabela);
+    if (tabela !== 'precificacao_produtos') return q;
+    const selOrig = q.select.bind(q);
+    q.select = function(...args){
+      let b = selOrig(...args);
+      if (operacaoAtual === 'loja') b = b.not('categoria','ilike','%yeez%').not('nome','ilike','%yeez%');
+      return b;
+    };
+    return q;
+  };
+})();
 const PORTAL_URL = 'https://thiagodlborges.github.io/Sistema-Luna/';
 const $ = id => document.getElementById(id);
 
@@ -667,6 +730,8 @@ async function verificarAcessoEIniciar(){
     return;
   }
 
+  aplicarOperacao();
+  if (operacaoAtual === 'distribuicao') { currentTab = 'distguia'; document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab==='distguia')); }
   renderTab();
   atualizarBadgePendentes();
   atualizarBadgeAlertasMargem();
@@ -704,8 +769,26 @@ function mudarTab(tab){
   renderTab();
 }
 
+function aplicarOperacao(){
+  const dist = operacaoAtual === 'distribuicao';
+  $('btnOpLoja').classList.toggle('op-ativo', !dist);
+  $('btnOpDist').classList.toggle('op-ativo', dist);
+  document.querySelectorAll('.tab').forEach(t => {
+    const ehDist = t.dataset.tab === 'distguia';
+    t.classList.toggle('op-oculta', dist ? !ehDist : ehDist);
+  });
+}
+function mudarOperacao(op){
+  if (op === operacaoAtual) return;
+  operacaoAtual = op;
+  try { localStorage.setItem('precif_operacao', op); } catch(e) {}
+  aplicarOperacao();
+  mudarTab(op === 'distribuicao' ? 'distguia' : 'produtos');
+}
+
 function renderTab(){
-  if(currentTab==='produtos') renderProdutos();
+  if(currentTab==='distguia') renderDistribuicao();
+  else if(currentTab==='produtos') renderProdutos();
   else if(currentTab==='tributos') renderTributos();
   else if(currentTab==='precos') renderPrecos();
   else if(currentTab==='insumos') renderInsumos();
@@ -716,6 +799,214 @@ function renderTab(){
   else if(currentTab==='variacaocustos') renderVariacaoCustos();
   else if(currentTab==='cadeiacomercial') renderCadeiaComercial();
   else if(currentTab==='tabelasalt') renderTabelasAlternativas();
+}
+
+// ── OPERAÇÃO DISTRIBUIÇÃO ──────────────────────────────────
+// Mesma estrutura da guia de preços do módulo de Freezers e MESMAS tabelas do banco (freezer_produtos_simples,
+// freezer_tabelas_preco, freezer_tabela_preco_itens): o que muda aqui aparece nos Freezers e vice-versa.
+// A tabela padrão (PDV) é o preço oficial da fábrica para a distribuição.
+const DIST_ORDEM = [['Luna','Picolés'],['Luna','Potes'],['Yeez','Picolés'],['Yeez','Potes']];
+const distTipoPorNome = n => /^pote/i.test(n||'') ? 'Potes' : 'Picolés';
+const distMarcaSimples = p => (/yeez/i.test(p.marca||'') || /yeez/i.test(p.nome||'')) ? 'Yeez' : 'Luna';
+function distAgrupar(linhas, getPreco){
+  const grupos = DIST_ORDEM.map(([m,t]) => ({ marca:m, tipo:t, titulo:m.toUpperCase()+' — '+t, itens:[] }));
+  linhas.forEach(l => { const i = DIST_ORDEM.findIndex(([m,t]) => m===l.marca && t===l.tipo); grupos[i>=0?i:0].itens.push(l); });
+  grupos.forEach(g => g.itens.sort((a,b) => (getPreco(b)-getPreco(a)) || String(a.nome).localeCompare(String(b.nome),'pt-BR')));
+  return grupos.filter(g => g.itens.length);
+}
+let dist = { simples: [], fabrica: [], tabelas: [], itens: [], padrao: null, distribuidor: null, ocultosLuna: 0 };
+
+async function renderDistribuicao(){
+  $('mainContent').innerHTML =
+    '<div class="card">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'+
+        '<h2 style="margin:0">Guia de Preços — Distribuição</h2>'+
+        '<button class="btn btn-sm" onclick="distAbrirProduto()">+ Novo Item</button>'+
+      '</div>'+
+      '<p class="hint" style="margin-top:6px">Picolés e potes da <strong>Luna</strong> e da <strong>Yeez</strong>. O preço <strong>PDV</strong> é a tabela padrão — o preço oficial da fábrica — e vale para quem não tem tabela própria. O que for alterado aqui aparece no módulo de Freezers e vice-versa.</p>'+
+      '<div id="distProdutosLista" style="margin-top:12px" class="loading">Carregando…</div>'+
+    '</div>'+
+    '<div class="card">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'+
+        '<h2 style="margin:0">Tabelas de Preço</h2>'+
+        '<button class="btn btn-sm" onclick="distAbrirTabela()">+ Nova Tabela</button>'+
+      '</div>'+
+      '<p class="hint" style="margin-top:6px">Tabela padrão (PDV), Distribuidor e tabelas de clientes específicos. Associe a tabela ao cliente na tela de editar freezer.</p>'+
+      '<div id="distTabelasLista" style="margin-top:12px" class="loading">Carregando…</div>'+
+    '</div>';
+  await distCarregar();
+  distRenderProdutos();
+  distRenderTabelas();
+}
+
+async function distCarregar(){
+  const [sR, fR, tR, iR] = await Promise.all([
+    sb.from('freezer_produtos_simples').select('*').order('nome'),
+    sb.from('precificacao_produtos').select('id,nome,categoria').eq('origem','fabrica').eq('ativo', true).in('categoria', ['Picolés','Potes']).order('nome'),
+    sb.from('freezer_tabelas_preco').select('*').order('nome'),
+    sb.from('freezer_tabela_preco_itens').select('id,tabela_id,produto_id,produto_simples_id,preco'),
+  ]);
+  const erro = [sR,fR,tR,iR].find(r => r.error);
+  if (erro) { $('distProdutosLista').innerHTML = '<div class="empty">Erro: '+esc(erro.error.message)+'</div>'; $('distTabelasLista').innerHTML = ''; throw erro.error; }
+  const todosSimples = sR.data || [];
+  // Luna vem dos produtos de fábrica; os cadastros antigos "Picolé Luna …/Pote Luna …" são duplicados e ficam ocultos aqui
+  dist.simples = todosSimples.filter(p => distMarcaSimples(p) === 'Yeez');
+  dist.ocultosLuna = todosSimples.length - dist.simples.length;
+  dist.fabrica = fR.data || [];
+  dist.tabelas = tR.data || [];
+  dist.itens = iR.data || [];
+  dist.padrao = dist.tabelas.find(t => t.padrao) || null;
+  dist.distribuidor = dist.tabelas.find(t => /^distribuidor/i.test(t.nome) && t.ativo) || null;
+}
+function distPrecoNaTabela(tabela, linha){
+  if (!tabela) return null;
+  const it = dist.itens.find(i => i.tabela_id === tabela.id && (linha.kind==='F' ? i.produto_id === linha.id : i.produto_simples_id === linha.id));
+  return it ? Number(it.preco) : null;
+}
+function distLinhas(){
+  const f = dist.fabrica.map(p => ({ kind:'F', id:p.id, nome:p.nome, marca:'Luna', tipo: p.categoria==='Potes'?'Potes':'Picolés', upc: p.categoria==='Potes'?null:20, ativo:true }));
+  const s = dist.simples.map(p => ({ kind:'S', id:p.id, nome:p.nome, marca:'Yeez', tipo: distTipoPorNome(p.nome), upc:p.unidades_por_caixa, ativo:p.ativo, codigo:p.codigo, preco_simples:Number(p.preco)||0 }));
+  return f.concat(s).map(l => ({ ...l, pdv: distPrecoNaTabela(dist.padrao, l), distribuidor: distPrecoNaTabela(dist.distribuidor, l) }));
+}
+function distRenderProdutos(){
+  const el = $('distProdutosLista');
+  const linhas = distLinhas();
+  const aviso = dist.padrao ? '' : '<div class="empty" style="margin-bottom:8px">⚠ Nenhuma tabela está marcada como padrão: marque a PDV abaixo (botão "Tornar padrão").</div>';
+  const colDist = dist.distribuidor ? '<th>Distribuidor (R$)</th>' : '';
+  el.innerHTML = aviso + '<div class="table-wrap"><table><thead><tr><th>Produto</th><th>PDV — padrão (R$)</th>'+colDist+'<th>Un/Caixa</th><th>Ativo</th><th></th></tr></thead><tbody>'+
+    distAgrupar(linhas, l => l.pdv != null ? l.pdv : (l.preco_simples||0)).map(g =>
+      '<tr><td colspan="6" style="background:#F4ECE4;font-weight:700;font-size:.78rem;letter-spacing:.04em">'+esc(g.titulo)+'</td></tr>'+
+      g.itens.map(l => {
+        const campo = (tab, v) => tab ? '<input class="inp" type="number" min="0" step="0.01" value="'+(v!=null?Number(v).toFixed(2):'')+'" placeholder="—" style="max-width:110px" onchange="distSalvarPreco(\''+tab.id+'\',\''+l.kind+'\',\''+l.id+'\',this.value)">' : '';
+        return '<tr'+(l.ativo?'':' class="inativo"')+'>'+
+          '<td>'+esc(l.nome)+(l.kind==='F'?' <span style="color:var(--text-light);font-size:.72rem">(fábrica)</span>':'')+'</td>'+
+          '<td>'+(dist.padrao ? campo(dist.padrao, l.pdv) : '—')+'</td>'+
+          (dist.distribuidor ? '<td>'+campo(dist.distribuidor, l.distribuidor)+'</td>' : '')+
+          '<td>'+(l.upc!=null?esc(l.upc):'—')+'</td>'+
+          '<td>'+(l.kind==='S' ? '<input type="checkbox" '+(l.ativo?'checked':'')+' onchange="distAtivoSimples(\''+l.id+'\',this.checked)">' : '✅')+'</td>'+
+          '<td style="white-space:nowrap">'+(l.kind==='S' ? '<button class="btn-outline btn btn-sm" onclick="distAbrirProduto(\''+l.id+'\')">Editar</button>' : '')+'</td>'+
+        '</tr>';
+      }).join('')
+    ).join('')+
+  '</tbody></table></div>'+
+  (dist.ocultosLuna ? '<p class="hint" style="margin-top:8px">'+dist.ocultosLuna+' cadastro(s) antigo(s) da Luna ("Picolé Luna …", "Pote Luna …") ficam ocultos aqui: são duplicados dos produtos de fábrica acima.</p>' : '');
+}
+async function distSalvarPreco(tabelaId, kind, id, valor){
+  const v = String(valor).trim();
+  const it = dist.itens.find(i => i.tabela_id === tabelaId && (kind==='F' ? i.produto_id === id : i.produto_simples_id === id));
+  let error;
+  if (v === ''){
+    if (it) ({ error } = await sb.from('freezer_tabela_preco_itens').delete().eq('id', it.id));
+  } else if (it){
+    ({ error } = await sb.from('freezer_tabela_preco_itens').update({ preco: Number(v) }).eq('id', it.id));
+  } else {
+    ({ error } = await sb.from('freezer_tabela_preco_itens').insert(kind==='F' ? { tabela_id: tabelaId, produto_id: id, preco: Number(v) } : { tabela_id: tabelaId, produto_simples_id: id, preco: Number(v) }));
+  }
+  if (error){ alert('Erro ao salvar o preço: '+error.message); }
+  await distCarregar(); distRenderProdutos(); distRenderTabelas();
+}
+async function distAtivoSimples(id, ativo){
+  const { error } = await sb.from('freezer_produtos_simples').update({ ativo }).eq('id', id);
+  if (error) alert('Erro: '+error.message);
+  await distCarregar(); distRenderProdutos();
+}
+function distAbrirProduto(id){
+  $('dpMsg').className = 'msg';
+  const p = id ? dist.simples.find(x => x.id === id) : null;
+  $('dpId').value = p ? p.id : '';
+  $('dpTitulo').textContent = p ? 'Editar Produto (Distribuição)' : 'Novo Produto (Distribuição)';
+  $('dpNome').value = p ? p.nome : '';
+  $('dpCategoria').value = p ? p.categoria : 'Picolé';
+  $('dpMarca').value = p ? (p.marca||'') : 'Yeez';
+  $('dpPreco').value = p ? Number(p.preco||0) : '0';
+  $('dpUpc').value = p && p.unidades_por_caixa != null ? p.unidades_por_caixa : '';
+  $('dpCodigo').value = p ? (p.codigo||'') : '';
+  $('modalDistProduto').classList.add('show');
+}
+async function distSalvarProduto(){
+  const id = $('dpId').value || null;
+  const nome = $('dpNome').value.trim();
+  if (!nome){ showMsg('dpMsg','Informe o nome do produto.','err'); return; }
+  const upcRaw = $('dpUpc').value.trim();
+  const upc = upcRaw === '' ? null : Number(upcRaw);
+  if (upc !== null && (isNaN(upc) || upc <= 0)){ showMsg('dpMsg','Un. por caixa deve ser maior que zero, ou fique em branco.','err'); return; }
+  const dados = { nome, categoria: $('dpCategoria').value, marca: $('dpMarca').value.trim() || null, preco: Number($('dpPreco').value)||0, unidades_por_caixa: upc, codigo: $('dpCodigo').value.trim() || null };
+  const { error } = id ? await sb.from('freezer_produtos_simples').update(dados).eq('id', id) : await sb.from('freezer_produtos_simples').insert(dados);
+  if (error){ showMsg('dpMsg','Erro: '+error.message,'err'); return; }
+  fecharModal('modalDistProduto');
+  await distCarregar(); distRenderProdutos(); distRenderTabelas();
+}
+
+function distRenderTabelas(){
+  const el = $('distTabelasLista');
+  if (!dist.tabelas.length){ el.innerHTML = '<div class="empty">Nenhuma tabela de preço cadastrada ainda.</div>'; return; }
+  const qtd = {}; dist.itens.forEach(i => { qtd[i.tabela_id] = (qtd[i.tabela_id]||0)+1; });
+  el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Nome</th><th>Itens com preço</th><th>Padrão</th><th>Status</th><th></th></tr></thead><tbody>'+
+    dist.tabelas.map(t =>
+      '<tr'+(t.ativo?'':' class="inativo"')+'>'+
+        '<td>'+esc(t.nome)+'</td><td>'+(qtd[t.id]||0)+'</td>'+
+        '<td>'+(t.padrao ? '<span class="badge badge-ativo">Padrão</span>' : '<button class="btn-outline btn btn-sm" onclick="distTornarPadrao(\''+t.id+'\')">Tornar padrão</button>')+'</td>'+
+        '<td>'+(t.ativo?'<span class="badge badge-ativo">Ativa</span>':'<span class="badge badge-inativo">Inativa</span>')+'</td>'+
+        '<td style="white-space:nowrap"><button class="btn-outline btn btn-sm" onclick="distAbrirTabela(\''+t.id+'\')">Editar</button> '+
+        (t.padrao ? '' : '<button class="btn-danger" onclick="distToggleTabela(\''+t.id+'\','+(!t.ativo)+')">'+(t.ativo?'Desativar':'Reativar')+'</button>')+'</td>'+
+      '</tr>').join('')+
+  '</tbody></table></div>';
+}
+async function distTornarPadrao(id){
+  if (!confirm('Tornar esta tabela o preço padrão (oficial) da fábrica na distribuição e nos Freezers?')) return;
+  let r = await sb.from('freezer_tabelas_preco').update({ padrao: false }).eq('padrao', true);
+  if (!r.error) r = await sb.from('freezer_tabelas_preco').update({ padrao: true, ativo: true }).eq('id', id);
+  if (r.error) alert('Erro: '+r.error.message);
+  await distCarregar(); distRenderProdutos(); distRenderTabelas();
+}
+async function distToggleTabela(id, ativo){
+  const { error } = await sb.from('freezer_tabelas_preco').update({ ativo }).eq('id', id);
+  if (error) alert('Erro: '+error.message);
+  await distCarregar(); distRenderTabelas();
+}
+async function distAbrirTabela(id){
+  $('dtMsg').className = 'msg';
+  $('dtId').value = id || '';
+  $('dtTitulo').textContent = id ? 'Editar Tabela de Preço' : 'Nova Tabela de Preço';
+  const t = id ? dist.tabelas.find(x => x.id === id) : null;
+  $('dtNome').value = t ? t.nome : '';
+  const tabRef = t || null;
+  const linhas = distLinhas().map(l => ({ ...l, preco: tabRef ? distPrecoNaTabela(tabRef, l) : null, ref: l.pdv != null ? l.pdv : (l.preco_simples||0) }));
+  $('dtItensLista').innerHTML = distAgrupar(linhas, l => l.preco != null ? l.preco : l.ref).map(g =>
+    '<div style="font-weight:700;font-size:.78rem;letter-spacing:.04em;background:#F4ECE4;padding:5px 8px;margin:10px 0 6px;border-radius:4px">'+esc(g.titulo)+'</div>'+
+    g.itens.map(l =>
+      '<div class="row" style="margin-bottom:6px;align-items:center">'+
+        '<span style="flex:2;font-size:.82rem">'+esc(l.nome)+' <span style="color:var(--text-light);font-size:.72rem">(padrão '+fmtMoeda(l.ref)+')</span></span>'+
+        '<input class="inp dt-item" data-kind="'+l.kind+'" data-id="'+l.id+'" type="number" min="0" step="0.01" value="'+(l.preco!=null?l.preco:'')+'" placeholder="usa padrão" style="flex:1">'+
+      '</div>').join('')
+  ).join('');
+  $('modalDistTabela').classList.add('show');
+}
+async function distSalvarTabela(){
+  const id = $('dtId').value;
+  const nome = $('dtNome').value.trim();
+  if (!nome){ showMsg('dtMsg','Informe o nome da tabela.','err'); return; }
+  let tabelaId = id;
+  if (tabelaId){
+    const { error } = await sb.from('freezer_tabelas_preco').update({ nome }).eq('id', tabelaId);
+    if (error){ showMsg('dtMsg','Erro: '+error.message,'err'); return; }
+  } else {
+    const { data, error } = await sb.from('freezer_tabelas_preco').insert({ nome }).select('id').single();
+    if (error){ showMsg('dtMsg','Erro: '+error.message,'err'); return; }
+    tabelaId = data.id;
+  }
+  // só mexe nos itens listados na tela: itens de produtos ocultos (cadastros antigos) continuam como estão
+  for (const inp of document.querySelectorAll('#dtItensLista .dt-item')){
+    const kind = inp.dataset.kind, pid = inp.dataset.id, v = inp.value.trim();
+    const it = dist.itens.find(i => i.tabela_id === tabelaId && (kind==='F' ? i.produto_id === pid : i.produto_simples_id === pid));
+    let error;
+    if (v === ''){ if (it) ({ error } = await sb.from('freezer_tabela_preco_itens').delete().eq('id', it.id)); }
+    else if (it){ if (Number(it.preco) !== Number(v)) ({ error } = await sb.from('freezer_tabela_preco_itens').update({ preco: Number(v) }).eq('id', it.id)); }
+    else ({ error } = await sb.from('freezer_tabela_preco_itens').insert(kind==='F' ? { tabela_id: tabelaId, produto_id: pid, preco: Number(v) } : { tabela_id: tabelaId, produto_simples_id: pid, preco: Number(v) }));
+    if (error){ showMsg('dtMsg','Erro ao salvar "'+inp.closest('.row').firstChild.textContent.trim()+'": '+error.message,'err'); return; }
+  }
+  fecharModal('modalDistTabela');
+  await distCarregar(); distRenderProdutos(); distRenderTabelas();
 }
 
 // ── PRODUTOS ───────────────────────────────────────────────
