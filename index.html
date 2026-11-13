@@ -167,7 +167,7 @@
     <input type="hidden" id="dpId">
     <div class="field" style="margin-bottom:10px"><label>Nome</label><input class="inp" id="dpNome" placeholder="Ex: Picolé Yeez Manga"></div>
     <div class="row">
-      <div class="field" style="flex:1"><label>Categoria</label><select class="inp" id="dpCategoria"><option value="Picolé">Picolé</option><option value="Pote">Pote</option></select></div>
+      <div class="field" style="flex:1"><label>Categoria</label><input class="inp" id="dpCategoria" list="dpCategoriasDatalist" placeholder="Clique na seta ou digite"><datalist id="dpCategoriasDatalist"></datalist></div>
       <div class="field" style="flex:1"><label>Marca</label><input class="inp" id="dpMarca" value="Yeez"></div>
     </div>
     <div class="row">
@@ -807,10 +807,17 @@ function renderTab(){
 // A tabela padrão (PDV) é o preço oficial da fábrica para a distribuição.
 const DIST_ORDEM = [['Luna','Picolés'],['Luna','Potes'],['Yeez','Picolés'],['Yeez','Potes']];
 const distTipoPorNome = n => /^pote/i.test(n||'') ? 'Potes' : 'Picolés';
+// Categorias padrão + qualquer categoria nova digitada no cadastro (ex: "Caixa 10L").
+const DIST_CATEGORIAS_BASE = ['Picolé','Pote','Caixa 10L'];
+const distCategoriaPadrao = c => /^(picol[eé]s?|potes?)?$/i.test((c||'').trim());
+// Picolé/Pote seguem a regra antiga (pelo nome); outras categorias viram grupo próprio.
+const distTipoSimples = p => distCategoriaPadrao(p.categoria) ? distTipoPorNome(p.nome) : p.categoria.trim();
 const distMarcaSimples = p => (/yeez/i.test(p.marca||'') || /yeez/i.test(p.nome||'')) ? 'Yeez' : 'Luna';
 function distAgrupar(linhas, getPreco){
-  const grupos = DIST_ORDEM.map(([m,t]) => ({ marca:m, tipo:t, titulo:m.toUpperCase()+' — '+t, itens:[] }));
-  linhas.forEach(l => { const i = DIST_ORDEM.findIndex(([m,t]) => m===l.marca && t===l.tipo); grupos[i>=0?i:0].itens.push(l); });
+  const ordem = DIST_ORDEM.slice();
+  linhas.forEach(l => { if (!ordem.some(([m,t]) => m===l.marca && t===l.tipo)) ordem.push([l.marca,l.tipo]); });
+  const grupos = ordem.map(([m,t]) => ({ marca:m, tipo:t, titulo:m.toUpperCase()+' — '+t, itens:[] }));
+  linhas.forEach(l => { const i = ordem.findIndex(([m,t]) => m===l.marca && t===l.tipo); grupos[i].itens.push(l); });
   grupos.forEach(g => g.itens.sort((a,b) => (getPreco(b)-getPreco(a)) || String(a.nome).localeCompare(String(b.nome),'pt-BR')));
   return grupos.filter(g => g.itens.length);
 }
@@ -850,8 +857,9 @@ async function distCarregar(){
   if (erro) { $('distProdutosLista').innerHTML = '<div class="empty">Erro: '+esc(erro.error.message)+'</div>'; $('distTabelasLista').innerHTML = ''; throw erro.error; }
   const todosSimples = sR.data || [];
   // Luna vem dos produtos de fábrica; os cadastros antigos "Picolé Luna …/Pote Luna …" são duplicados e ficam ocultos aqui
-  dist.simples = todosSimples.filter(p => distMarcaSimples(p) === 'Yeez');
+  dist.simples = todosSimples.filter(p => distMarcaSimples(p) === 'Yeez' || !distCategoriaPadrao(p.categoria));
   dist.ocultosLuna = todosSimples.length - dist.simples.length;
+  dist.todosSimples = todosSimples;
   dist.fabrica = fR.data || [];
   dist.tabelas = tR.data || [];
   dist.itens = iR.data || [];
@@ -865,7 +873,7 @@ function distPrecoNaTabela(tabela, linha){
 }
 function distLinhas(){
   const f = dist.fabrica.map(p => ({ kind:'F', id:p.id, nome:p.nome, marca:'Luna', tipo: p.categoria==='Potes'?'Potes':'Picolés', upc: p.categoria==='Potes'?null:20, ativo:true }));
-  const s = dist.simples.map(p => ({ kind:'S', id:p.id, nome:p.nome, marca:'Yeez', tipo: distTipoPorNome(p.nome), upc:p.unidades_por_caixa, ativo:p.ativo, codigo:p.codigo, preco_simples:Number(p.preco)||0 }));
+  const s = dist.simples.map(p => ({ kind:'S', id:p.id, nome:p.nome, marca:distMarcaSimples(p), tipo: distTipoSimples(p), upc:p.unidades_por_caixa, ativo:p.ativo, codigo:p.codigo, preco_simples:Number(p.preco)||0 }));
   return f.concat(s).map(l => ({ ...l, pdv: distPrecoNaTabela(dist.padrao, l), distribuidor: distPrecoNaTabela(dist.distribuidor, l) }));
 }
 function distRenderProdutos(){
@@ -916,6 +924,8 @@ function distAbrirProduto(id){
   $('dpId').value = p ? p.id : '';
   $('dpTitulo').textContent = p ? 'Editar Produto (Distribuição)' : 'Novo Produto (Distribuição)';
   $('dpNome').value = p ? p.nome : '';
+  const cats = [...new Set(DIST_CATEGORIAS_BASE.concat((dist.todosSimples||[]).map(x => x.categoria).filter(Boolean)))];
+  $('dpCategoriasDatalist').innerHTML = cats.map(c => '<option value="'+esc(c)+'">').join('');
   $('dpCategoria').value = p ? p.categoria : 'Picolé';
   $('dpMarca').value = p ? (p.marca||'') : 'Yeez';
   $('dpPreco').value = p ? Number(p.preco||0) : '0';
@@ -927,10 +937,12 @@ async function distSalvarProduto(){
   const id = $('dpId').value || null;
   const nome = $('dpNome').value.trim();
   if (!nome){ showMsg('dpMsg','Informe o nome do produto.','err'); return; }
+  const categoria = $('dpCategoria').value.trim();
+  if (!categoria){ showMsg('dpMsg','Informe a categoria.','err'); return; }
   const upcRaw = $('dpUpc').value.trim();
   const upc = upcRaw === '' ? null : Number(upcRaw);
   if (upc !== null && (isNaN(upc) || upc <= 0)){ showMsg('dpMsg','Un. por caixa deve ser maior que zero, ou fique em branco.','err'); return; }
-  const dados = { nome, categoria: $('dpCategoria').value, marca: $('dpMarca').value.trim() || null, preco: Number($('dpPreco').value)||0, unidades_por_caixa: upc, codigo: $('dpCodigo').value.trim() || null };
+  const dados = { nome, categoria, marca: $('dpMarca').value.trim() || null, preco: Number($('dpPreco').value)||0, unidades_por_caixa: upc, codigo: $('dpCodigo').value.trim() || null };
   const { error } = id ? await sb.from('freezer_produtos_simples').update(dados).eq('id', id) : await sb.from('freezer_produtos_simples').insert(dados);
   if (error){ showMsg('dpMsg','Erro: '+error.message,'err'); return; }
   fecharModal('modalDistProduto');
