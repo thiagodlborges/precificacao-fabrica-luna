@@ -167,7 +167,7 @@
     <input type="hidden" id="dpId">
     <div class="field" style="margin-bottom:10px"><label>Nome</label><input class="inp" id="dpNome" placeholder="Ex: Picolé Yeez Manga"></div>
     <div class="row">
-      <div class="field" style="flex:1"><label>Categoria</label><input class="inp" id="dpCategoria" list="dpCategoriasDatalist" placeholder="Clique na seta ou digite"><datalist id="dpCategoriasDatalist"></datalist></div>
+      <div class="field" style="flex:1"><label>Categoria</label><div style="display:flex;gap:6px"><select class="inp" id="dpCategoria" style="flex:1"></select><button type="button" class="btn-outline btn btn-sm" onclick="distNovaCategoria()">+ Nova</button></div></div>
       <div class="field" style="flex:1"><label>Marca</label><input class="inp" id="dpMarca" value="Yeez"></div>
     </div>
     <div class="row">
@@ -808,7 +808,6 @@ function renderTab(){
 const DIST_ORDEM = [['Luna','Picolés'],['Luna','Potes'],['Yeez','Picolés'],['Yeez','Potes']];
 const distTipoPorNome = n => /^pote/i.test(n||'') ? 'Potes' : 'Picolés';
 // Categorias padrão + qualquer categoria nova digitada no cadastro (ex: "Caixa 10L").
-const DIST_CATEGORIAS_BASE = ['Picolé','Pote','Caixa 10L'];
 const distCategoriaPadrao = c => /^(picol[eé]s?|potes?)?$/i.test((c||'').trim());
 // Picolé/Pote seguem a regra antiga (pelo nome); outras categorias viram grupo próprio.
 const distTipoSimples = p => distCategoriaPadrao(p.categoria) ? distTipoPorNome(p.nome) : p.categoria.trim();
@@ -847,19 +846,20 @@ async function renderDistribuicao(){
 }
 
 async function distCarregar(){
-  const [sR, fR, tR, iR] = await Promise.all([
+  const [sR, fR, tR, iR, cR] = await Promise.all([
     sb.from('freezer_produtos_simples').select('*').order('nome'),
     sb.from('precificacao_produtos').select('id,nome,categoria').eq('origem','fabrica').eq('ativo', true).in('categoria', ['Picolés','Potes']).order('nome'),
     sb.from('freezer_tabelas_preco').select('*').order('nome'),
     sb.from('freezer_tabela_preco_itens').select('id,tabela_id,produto_id,produto_simples_id,preco'),
+    sb.from('freezer_categorias_simples').select('nome').order('criado_em'),
   ]);
-  const erro = [sR,fR,tR,iR].find(r => r.error);
+  const erro = [sR,fR,tR,iR,cR].find(r => r.error);
   if (erro) { $('distProdutosLista').innerHTML = '<div class="empty">Erro: '+esc(erro.error.message)+'</div>'; $('distTabelasLista').innerHTML = ''; throw erro.error; }
   const todosSimples = sR.data || [];
   // Luna vem dos produtos de fábrica; os cadastros antigos "Picolé Luna …/Pote Luna …" são duplicados e ficam ocultos aqui
   dist.simples = todosSimples.filter(p => distMarcaSimples(p) === 'Yeez' || !distCategoriaPadrao(p.categoria));
   dist.ocultosLuna = todosSimples.length - dist.simples.length;
-  dist.todosSimples = todosSimples;
+  dist.categorias = (cR.data || []).map(c => c.nome);
   dist.fabrica = fR.data || [];
   dist.tabelas = tR.data || [];
   dist.itens = iR.data || [];
@@ -924,14 +924,27 @@ function distAbrirProduto(id){
   $('dpId').value = p ? p.id : '';
   $('dpTitulo').textContent = p ? 'Editar Produto (Distribuição)' : 'Novo Produto (Distribuição)';
   $('dpNome').value = p ? p.nome : '';
-  const cats = [...new Set(DIST_CATEGORIAS_BASE.concat((dist.todosSimples||[]).map(x => x.categoria).filter(Boolean)))];
-  $('dpCategoriasDatalist').innerHTML = cats.map(c => '<option value="'+esc(c)+'">').join('');
-  $('dpCategoria').value = p ? p.categoria : 'Picolé';
+  distPreencherCategorias(p ? p.categoria : 'Picolé');
   $('dpMarca').value = p ? (p.marca||'') : 'Yeez';
   $('dpPreco').value = p ? Number(p.preco||0) : '0';
   $('dpUpc').value = p && p.unidades_por_caixa != null ? p.unidades_por_caixa : '';
   $('dpCodigo').value = p ? (p.codigo||'') : '';
   $('modalDistProduto').classList.add('show');
+}
+function distPreencherCategorias(sel){
+  $('dpCategoria').innerHTML = dist.categorias.map(c => '<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
+  $('dpCategoria').value = sel;
+}
+async function distNovaCategoria(){
+  const nome = (prompt('Nome da nova categoria (ex: Caixa 5L):') || '').trim();
+  if (!nome) return;
+  const ja = dist.categorias.find(c => c.toLowerCase() === nome.toLowerCase());
+  if (!ja){
+    const { error } = await sb.from('freezer_categorias_simples').insert({ nome });
+    if (error){ showMsg('dpMsg','Erro ao criar categoria: '+error.message,'err'); return; }
+    dist.categorias.push(nome);
+  }
+  distPreencherCategorias(ja || nome);
 }
 async function distSalvarProduto(){
   const id = $('dpId').value || null;
